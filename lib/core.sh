@@ -132,6 +132,10 @@ foreign_snapshots() {  # other Macs' snapshots, newest first: "<sha> <time> <mac
     awk -v m="$MAC" '$3 != m'
 }
 
+committed_upstream() {  # $1 tree, $2 HEAD, $3 upstream: is this exact tree a commit on the way up?
+  git rev-list --max-count=500 --format=%T "$2..$3" | grep -q -x "$1"
+}
+
 fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean branch
   local name=$1 g applied head up n
   g=$(git rev-parse --git-dir)
@@ -140,10 +144,11 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
   applied=$(cat "$g/roam-applied" 2>/dev/null)
 
   if ! is_clean; then
-    # The uncommitted changes here are exactly what upstream now contains (another Mac took them over
-    # and committed them, or committed the same work): moving to upstream loses nothing.
+    # The uncommitted changes here are exactly what upstream contains at some commit between HEAD and
+    # upstream (another Mac committed them — maybe with more commits on top): moving to upstream loses
+    # nothing.
     if [ "$head" != "$up" ] && git merge-base --is-ancestor "$head" "$up" &&
-       [ "$(worktree_tree)" = "$(git rev-parse "$up^{tree}")" ]; then
+       committed_upstream "$(worktree_tree)" "$head" "$up"; then
       git reset -q --hard "$up" && git clean -q -fd && rm -f "$g/roam-applied"
       drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
       report ok "$name" "your changes were committed on another Mac — now at $(git rev-parse --abbrev-ref '@{u}')"
