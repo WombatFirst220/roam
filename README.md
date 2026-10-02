@@ -157,7 +157,9 @@ Without any configuration, by looking at your projects:
 | `X.example` | whether `X` exists locally |
 | an ignored file another Mac has | whether it's missing here (names only — contents never leave a Mac) |
 
-`✗ missing` blocks your work, `• hint` only matters for some parts (backend, deployment, devices).
+`✗ missing` blocks your work, `• hint` only matters for some parts (backend, deployment, devices),
+`ⓘ info` is just worth knowing and never counts as a problem — optional templates and files that only
+another Mac has, summarized in one line per project.
 
 ## Configuration
 

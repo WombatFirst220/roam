@@ -41,7 +41,7 @@ registry_write() {
     echo "seen=$(date +%s)"
     if [ -f "$DOCTOR_FILE" ]; then
       echo "doctor=$(stat -f %m "$DOCTOR_FILE") $(grep -c '^missing' "$DOCTOR_FILE") $(grep -c '^hint' "$DOCTOR_FILE")"
-      awk -F"$US" -v OFS="$TAB" '$1 != "ok" {print "issue=" $1, $2, $3}' "$DOCTOR_FILE"
+      awk -F"$US" -v OFS="$TAB" '$1 == "missing" || $1 == "hint" {print "issue=" $1, $2, $3}' "$DOCTOR_FILE"
     fi
     while read -r name dir remote extra; do
       [ -n "$name" ] || continue

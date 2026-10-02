@@ -8,6 +8,7 @@
 #
 # Result line (separator \037): level  area  text  fix-command  how-to
 #   level: ok | missing (blocks work) | hint (only some parts need it — backend, deployment, devices)
+#          | info (worth knowing, never counted as a problem)
 
 DOCTOR_FILE="$CACHE/doctor.tsv"
 # ignored paths no Mac needs to hand over: build output, dependencies, editor state
@@ -140,21 +141,32 @@ check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
     have "$c" && res ok "$name" "$c" || res missing "$name" "$c" "brew install $c"
   done
 
-  # local files: local=… are required; a template X.example without X is just a hint
+  # local files: local=… are required (missing → ✗). Everything else is information only — shown once
+  # per project, never counted as a problem: optional templates and files only another Mac has.
   required=" $(printf '%s' "$extra" | tr ' ' '\n' | sed -n 's/^local=//p' | tr ',' ' ') "
   for f in $required; do
     [ -e "$path/$f" ] && res ok "$name" "$f present" ||
       res missing "$name" "$f" "" "not in git — copy it from your password manager or another Mac"
   done
-  git -C "$path" ls-files 2>/dev/null | grep -E '\.example$' | while IFS= read -r f; do
-    case $required in *" ${f%.example} "*) continue ;; esac
-    [ -e "$path/${f%.example}" ] && res ok "$name" "${f%.example} present" ||
-      res hint "$name" "${f%.example} (template: $f)" "" "if you need it here: password manager or another Mac"
-  done
-  # local files another Mac in the pool has
+  f=$(git -C "$path" ls-files 2>/dev/null | grep -E '\.example$' | while IFS= read -r t; do
+        [ "${required#* ${t%.example} }" != "$required" ] && continue
+        [ -e "$path/${t%.example}" ] || printf '%s\n' "${t%.example}"
+      done)
+  [ -n "$f" ] && res info "$name" "optional, not here: $(list_short "$f")" "" "from templates (*.example) — only needed for local overrides"
   other_local_files "$name" | while IFS="$TAB" read -r m f; do
-    [ -e "$path/$f" ] || res hint "$name" "$f — only on $(short_name "$m")" "" "not in git — copy it from that Mac or your password manager"
+    [ -e "$path/$f" ] || printf '%s\t%s\n' "$m" "$f"
+  done | sort | awk -F"$TAB" '{ if ($1 != m) { if (m != "") print m "\t" l; m = $1; l = $2 } else l = l "\034" $2 } END { if (m != "") print m "\t" l }' |
+  while IFS="$TAB" read -r m f; do
+    f=$(printf '%s' "$f" | tr '\034' '\n')
+    res info "$name" "only on $(short_name "$m"), not in git: $(list_short "$f")" "" "copy what you need from that Mac or your password manager"
   done
+}
+
+list_short() {  # lines → "a, b, c +5 more"
+  local n
+  n=$(printf '%s\n' "$1" | grep -c .)
+  if [ "$n" -le 3 ]; then printf '%s\n' "$1" | paste -sd, - | sed 's/,/, /g'
+  else printf '%s +%s more' "$(printf '%s\n' "$1" | head -3 | paste -sd, - | sed 's/,/, /g')" $((n - 3)); fi
 }
 
 doctor_run() {
@@ -189,15 +201,16 @@ doctor_show() {
     case $level in
       ok)      icon=$I_OK ;;
       missing) icon=$I_ERR ;;
+      info)    icon="${C_MUTED}ⓘ${C_RESET}" ;;
       *)       icon=$I_WARN ;;
     esac
-    if [ "$level" = ok ]; then printf '    %s %s%s%s\n' "$icon" "$C_MUTED" "$text" "$C_RESET"
+    if [ "$level" = ok ] || [ "$level" = info ]; then printf '    %s %s%s%s\n' "$icon" "$C_MUTED" "$text" "$C_RESET"
     else printf '    %s %s\n' "$icon" "$text"; fi
     [ -n "$cmd" ] && printf '      %sfix%s %s%s%s\n' "$C_ACCENT" "$C_RESET" "$C_CYAN" "$(trunc "$cmd" $w)" "$C_RESET"
     [ -n "$howto" ] && printf '      %s→ %s%s\n' "$C_MUTED" "$howto" "$C_RESET"
   done < "$DOCTOR_FILE"
   missing=$(grep -c "^missing" "$DOCTOR_FILE"); hints=$(grep -c "^hint" "$DOCTOR_FILE")
-  fixable=$(awk -F"$US" '$1 != "ok" && $4 != ""' "$DOCTOR_FILE" | grep -c .)
+  fixable=$(awk -F"$US" '$1 != "ok" && $1 != "info" && $4 != ""' "$DOCTOR_FILE" | grep -c .)
   echo
   rule
   if [ "$missing" -eq 0 ] && [ "$hints" -eq 0 ]; then
@@ -213,7 +226,7 @@ fix_run() {
   local level area text cmd howto n=0
   [ -t 0 ] || { echo "roam fix needs a terminal (it asks before every step)."; return; }
   while IFS="$US" read -r level area text cmd howto; do
-    [ "$level" = ok ] && continue
+    case $level in ok|info) continue ;; esac
     n=$((n + 1))
     printf '\n  %s %s%s%s · %s\n' "$([ "$level" = missing ] && echo "$I_ERR" || echo "$I_WARN")" "$C_BOLD" "$area" "$C_RESET" "$text"
     if [ -n "$cmd" ]; then

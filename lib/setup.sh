@@ -298,7 +298,7 @@ EOF
   step 7 "Prerequisites" "Does this Mac have what your projects need?"
   ( doctor_run ) & spin_while $! "${C_MUTED}checking…${C_RESET}"
   doctor_show
-  if [ -n "$(awk -F"$US" '$1 != "ok"' "$DOCTOR_FILE")" ] && confirm "Fix what can be fixed now?" y; then
+  if [ -n "$(awk -F"$US" '$1 == "missing" || $1 == "hint"' "$DOCTOR_FILE")" ] && confirm "Fix what can be fixed now?" y; then
     fix_run; doctor_run
   fi
   registry_write
