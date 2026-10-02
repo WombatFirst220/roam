@@ -1,0 +1,128 @@
+#!/bin/bash
+# roam — work on the same projects from several Macs, always in sync.
+#
+#   roam              dashboard: every Mac, every project, work in flight
+#   roam resume       pick up where you left off — run it when you sit down at a Mac
+#   roam park         put this Mac's unfinished work on the remote — before you walk away
+#   roam status       the dashboard without the menu (scripts, quick look)
+#   roam doctor       does this Mac have everything your projects need?
+#   roam fix          fix what doctor found, one step at a time
+#   roam setup        the setup wizard — on a new Mac, this is the only thing you run
+#   roam add <remote> [name]   add a project to the pool
+#   roam leave        take this Mac out of the pool
+#   roam auto         background run (LaunchAgent): park, report, never touch your files
+#
+# roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
+set -u
+ROAM_VERSION=1.0.0
+export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
+
+SRC=$0
+while [ -L "$SRC" ]; do
+  T=$(readlink "$SRC")
+  case $T in /*) SRC=$T ;; *) SRC=$(dirname "$SRC")/$T ;; esac
+done
+HERE=$(cd "$(dirname "$SRC")" && pwd -P)
+CONFIG="$HOME/.config/roam/config"
+LABEL=${ROAM_LABEL:-app.roam.auto}
+AGENT_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+MAC=${ROAM_MAC:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}
+LOG=${ROAM_LOG:-$HOME/Library/Logs/roam.log}
+LOCK=${ROAM_LOCK:-${TMPDIR:-/tmp}/roam.lock}
+CACHE="$HOME/Library/Caches/roam"
+CMD=${1:-}
+
+# ---------------------------------------------------------------- configuration
+# Order: environment (ROAM_POOL, ROAM_PROJECTS_DIR) › ~/.config/roam/config › defaults.
+conf_val() {  # $1 key in key=value file $2
+  [ -f "$2" ] || return 0
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$2" | tail -1 | sed "s#^~#$HOME#"
+}
+POOL=${ROAM_POOL:-$(conf_val pool "$CONFIG")}
+PROJECTS_DIR=${ROAM_PROJECTS_DIR:-$(conf_val projects_dir "$CONFIG")}
+PROJECTS_DIR=${PROJECTS_DIR:-$HOME/Developer}
+
+use_pool() {  # derive every path and setting from $POOL
+  PROJECTS_CONF="$POOL/projects.conf"
+  SETTINGS="$POOL/settings"
+  MACS_DIR="$POOL/macs"
+  CLAUDE_STORE="$POOL/claude"
+  CLAUDE_SYNC=$(conf_val claude_sync "$SETTINGS"); CLAUDE_SYNC=${CLAUDE_SYNC:-1}
+  CLAUDE_HISTORY=$(conf_val claude_history "$SETTINGS"); CLAUDE_HISTORY=${CLAUDE_HISTORY:-1}
+  INTERVAL=$(conf_val interval_min "$SETTINGS"); INTERVAL=${INTERVAL:-10}
+  MAX_BYTES=$(( $(v=$(conf_val max_file_mb "$SETTINGS"); echo "${v:-50}") * 1024 * 1024 ))
+}
+use_pool
+
+# New untracked files like these block parking a project: keys and credentials don't belong
+# on the remote, not even in a helper ref.
+SECRET_PATTERN='(\.(pem|p12|p8|key|keystore|jks|mobileprovision)$|(^|/)\.env(\.[^/]*)?$|(^|/)id_(rsa|ecdsa|ed25519)$|(^|/)\.netrc$)'
+
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15"
+# snapshot commits carry your own git identity; "roam" only if there is none
+if [ -z "$(git config --global user.name 2>/dev/null)" ]; then
+  export GIT_AUTHOR_NAME="roam" GIT_AUTHOR_EMAIL="roam@$MAC" GIT_COMMITTER_NAME="roam" GIT_COMMITTER_EMAIL="roam@$MAC"
+fi
+
+log() { mkdir -p "$(dirname "$LOG")"; printf '[%s] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${CMD:-ui}" "$*" >> "$LOG"; }
+notify() { log "notify: $*"; osascript -e "display notification \"$(printf '%s' "$*" | tr '"' "'")\" with title \"roam\"" 2>/dev/null; }
+ago() {  # unix time → "5 min ago"
+  local s=$(( $(date +%s) - $1 ))
+  if [ $s -lt 120 ]; then echo "just now"
+  elif [ $s -lt 3600 ]; then echo "$((s / 60)) min ago"
+  elif [ $s -lt 172800 ]; then echo "$((s / 3600)) h ago"
+  else echo "$((s / 86400)) days ago"; fi
+}
+projects() { [ -f "$PROJECTS_CONF" ] && grep -v -E '^[[:space:]]*(#|$)' "$PROJECTS_CONF"; }
+
+for f in ui core doctor pool setup; do . "$HERE/lib/$f.sh"; done
+
+need_pool() {
+  [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && return 0
+  header "" ""
+  printf '\n  This Mac isn'"'"'t in a pool yet. Start here:  %sroam setup%s\n\n' "$C_ACCENT" "$C_RESET"
+  exit 2
+}
+
+lock() {
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then rmdir "$LOCK"; mkdir "$LOCK"
+    else say_info "roam is busy (background run?) — try again in a moment."; exit 0; fi
+  fi
+  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+}
+
+usage() {
+  header "v$ROAM_VERSION" ""
+  printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
+  sed -n '4,13p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  echo
+}
+
+ERRORS=0
+case $CMD in
+  "")
+    need_pool
+    if [ -t 0 ] && [ -t 1 ]; then interactive; else dashboard; fi ;;
+  status)  need_pool; dashboard ;;
+  park)    need_pool; lock
+           header "park" "$(short_name "$(scutil --get ComputerName)")"; echo
+           run_all park; registry_write; finish_park ;;
+  resume)  need_pool; lock
+           header "resume" "$(short_name "$(scutil --get ComputerName)")"; echo
+           run_all resume; registry_write; finish_resume ;;
+  auto)    need_pool; lock; run_all auto; doctor_if_due; registry_write ;;
+  doctor)  need_pool; header "doctor" "$(short_name "$(scutil --get ComputerName)")"
+           if [ "$UI_FANCY" = 1 ]; then ( doctor_run ) & spin_while $! "${C_MUTED}checking this Mac…${C_RESET}"; else doctor_run; fi
+           doctor_show; registry_write ;;
+  fix)     need_pool; header "fix" "$(short_name "$(scutil --get ComputerName)")"
+           doctor_run; fix_run; doctor_run; registry_write ;;
+  setup|join) setup "${2:-}" ;;
+  leave)   need_pool; leave ;;
+  add)     need_pool; add_project "${2:-}" "${3:-}" ;;
+  version|--version|-v) echo "roam $ROAM_VERSION" ;;
+  help|-h|--help) usage ;;
+  *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;
+esac
+exit $((ERRORS > 0))

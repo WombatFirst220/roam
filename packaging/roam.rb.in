@@ -1,0 +1,27 @@
+# Template for Formula/roam.rb in the tap repo wombatfirst220/homebrew-tap.
+# packaging/release.sh fills in version and sha256.
+class Roam < Formula
+  desc "Work on the same projects from several Macs, always in sync"
+  homepage "https://github.com/WombatFirst220/roam"
+  url "https://github.com/WombatFirst220/roam/archive/refs/tags/v@VERSION@.tar.gz"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on :macos
+
+  def install
+    libexec.install "roam", "lib"
+    bin.install_symlink libexec/"roam"
+  end
+
+  def caveats
+    <<~EOS
+      Set up this Mac (once per Mac):
+        roam setup
+    EOS
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/roam version")
+  end
+end
