@@ -237,7 +237,7 @@ EOF
 }
 
 # ---------------------------------------------------------------- interactive
-ACTIONS="Resume Park Doctor Fix Add Log Quit"
+ACTIONS="Resume Park New Doctor Fix Add Log Quit"
 action_bar() {  # $1 selected index
   local i=0 a out=""
   for a in $ACTIONS; do
@@ -262,10 +262,10 @@ interactive() {
     while :; do
       k=$(read_key)
       case $k in
-        LEFT|h)  sel=$(( (sel + 6) % 7 )); action_bar $sel; continue ;;
-        RIGHT|l) sel=$(( (sel + 1) % 7 )); action_bar $sel; continue ;;
+        LEFT|h)  sel=$(( (sel + 7) % 8 )); action_bar $sel; continue ;;
+        RIGHT|l) sel=$(( (sel + 1) % 8 )); action_bar $sel; continue ;;
         ENTER)   act=$(echo $ACTIONS | cut -d' ' -f$((sel + 1))) ;;
-        r|R) act=Resume ;; p|P) act=Park ;; d|D) act=Doctor ;; f|F) act=Fix ;;
+        r|R) act=Resume ;; p|P) act=Park ;; n|N) act=New ;; d|D) act=Doctor ;; f|F) act=Fix ;;
         a|A) act=Add ;; L) act=Log ;; q|Q|ESC) act=Quit ;; u|U) act=Refresh ;;
         *) continue ;;
       esac
@@ -281,6 +281,7 @@ interactive() {
               clear; header "doctor" "$(short_name "$(scutil --get ComputerName)")"; doctor_show; registry_write; pause; quick=quick ;;
       Fix)    ( doctor_run ) & spin_while $! "${C_MUTED}checking this Mac…${C_RESET}"
               fix_run; doctor_run; registry_write; pause; quick=quick ;;
+      New)    ( new_project ); pause ;;
       Add)    r=$(ask "Git remote of the project (e.g. git@github.com:you/app.git)" "")
               [ -n "$r" ] && add_project "$r" ""; pause ;;
       Log)    echo; tail -n 25 "$LOG" 2>/dev/null | sed 's/^/  /' || say_info "no log yet"; pause; quick=quick ;;

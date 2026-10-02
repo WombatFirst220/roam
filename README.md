@@ -52,12 +52,26 @@ That's it — on every Mac. The setup wizard walks you through everything:
 
 Run `roam setup` again any time — it confirms what's fine and repairs what isn't.
 
+## Start a new project
+
+```bash
+roam new MyApp
+```
+
+One command instead of ten: roam asks what you're building (iOS/macOS app, Swift package, web, other)
+and who may see it, then creates the folder, a fitting `.gitignore` and README, the GitHub repo,
+the first push — and adds it to the pool. Your other Macs get it with their next `roam resume`.
+
+Already made the folder, say in Xcode? Run `roam new` inside it, or `roam new ~/Developer/MyApp`.
+Public repos can be committed under your GitHub username and its private noreply address, so
+your real name and email stay off the internet.
+
 ## The dashboard
 
 Just type `roam`:
 
 ```
-  ◆ roam  v1.0.0                                            pool · iCloud Drive/roam
+  ◆ roam  v1.1.0                                            pool · iCloud Drive/roam
 
   ╭─ Macs ───────────────────────────────────────────────────────────────────────╮
   │ ▸ Mac mini            this Mac     macOS 26.1    Xcode 26.1   ✓ ready        │
@@ -74,7 +88,7 @@ Just type `roam`:
   │ MyApp         ☁ from this Mac · 2 min ago · feature/login                    │
   ╰──────────────────────────────────────────────────────────────────────────────╯
 
-   Resume   Park   Doctor   Fix   Add   Log   Quit     ←→ ⏎  or a letter
+   Resume   Park   New   Doctor   Fix   Add   Log   Quit   ←→ ⏎  or a letter
 ```
 
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep.
@@ -88,7 +102,8 @@ Every Mac reports its state to the pool, so you see your other Macs even while t
 | `roam park` | before you walk away (optional — auto-park runs every 10 min) |
 | `roam doctor` | does this Mac have everything your projects need? |
 | `roam fix` | fixes what doctor found, asking before every step |
-| `roam add <git-url>` | adds a project; every Mac gets it on its next `roam resume` |
+| `roam new [name]` | starts a project: folder, `.gitignore`, GitHub repo, pool — in one go |
+| `roam add <git-url>` | adds an existing repo; every Mac gets it on its next `roam resume` |
 | `roam status` | the dashboard without the menu |
 | `roam setup` | set up or repair this Mac |
 | `roam leave` | take this Mac out of the pool |

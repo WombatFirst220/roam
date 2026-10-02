@@ -8,13 +8,14 @@
 #   roam doctor       does this Mac have everything your projects need?
 #   roam fix          fix what doctor found, one step at a time
 #   roam setup        the setup wizard — on a new Mac, this is the only thing you run
-#   roam add <remote> [name]   add a project to the pool
+#   roam new [name]   start a project: folder, .gitignore, GitHub repo, pool — in one go
+#   roam add <remote> [name]   add an existing repo to the pool
 #   roam leave        take this Mac out of the pool
 #   roam auto         background run (LaunchAgent): park, report, never touch your files
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.0.0
+ROAM_VERSION=1.1.0
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 
 SRC=$0
@@ -76,7 +77,7 @@ ago() {  # unix time → "5 min ago"
 }
 projects() { [ -f "$PROJECTS_CONF" ] && grep -v -E '^[[:space:]]*(#|$)' "$PROJECTS_CONF"; }
 
-for f in ui core doctor pool setup; do . "$HERE/lib/$f.sh"; done
+for f in ui core doctor pool setup new; do . "$HERE/lib/$f.sh"; done
 
 need_pool() {
   [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && return 0
@@ -96,7 +97,7 @@ lock() {
 usage() {
   header "v$ROAM_VERSION" ""
   printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
-  sed -n '4,13p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  sed -n '4,14p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
 
@@ -121,6 +122,7 @@ case $CMD in
   setup|join) setup "${2:-}" ;;
   leave)   need_pool; leave ;;
   add)     need_pool; add_project "${2:-}" "${3:-}" ;;
+  new)     need_pool; new_project "${2:-}" ;;
   version|--version|-v) echo "roam $ROAM_VERSION" ;;
   help|-h|--help) usage ;;
   *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;

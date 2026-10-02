@@ -140,6 +140,15 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
   applied=$(cat "$g/roam-applied" 2>/dev/null)
 
   if ! is_clean; then
+    # The uncommitted changes here are exactly what upstream now contains (another Mac took them over
+    # and committed them, or committed the same work): moving to upstream loses nothing.
+    if [ "$head" != "$up" ] && git merge-base --is-ancestor "$head" "$up" &&
+       [ "$(worktree_tree)" = "$(git rev-parse "$up^{tree}")" ]; then
+      git reset -q --hard "$up" && git clean -q -fd && rm -f "$g/roam-applied"
+      drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
+      report ok "$name" "your changes were committed on another Mac — now at $(git rev-parse --abbrev-ref '@{u}')"
+      return
+    fi
     # What's here is exactly a snapshot we took over, and its Mac has since withdrawn it (committed and
     # pushed). If upstream has the same content, resetting loses nothing.
     if [ -n "$applied" ] && [ -n "$(current_matches "$applied")" ] &&
