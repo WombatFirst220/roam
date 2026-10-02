@@ -233,7 +233,8 @@ setup() {
   a=$(ask "Folder" "$(short_path "$PROJECTS_DIR")")
   PROJECTS_DIR=$(printf '%s' "$a" | sed "s#^~#$HOME#")
   mkdir -p "$PROJECTS_DIR" "$(dirname "$CONFIG")"
-  printf 'pool = %s\nprojects_dir = %s\n' "$POOL" "$PROJECTS_DIR" > "$CONFIG"
+  printf 'pool = %s\nprojects_dir = %s\nmac_id = %s\n' "$POOL" "$PROJECTS_DIR" "$MAC" > "$CONFIG"
+  adopt_identity
   say_ok "$(short_path "$PROJECTS_DIR") ${C_MUTED}· saved to $(short_path "$CONFIG")${C_RESET}"
 
   # ------------------------------------------------------------ 3. git

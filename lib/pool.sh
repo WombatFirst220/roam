@@ -28,9 +28,11 @@ project_state() {  # $1 path → branch, dirty, ahead, parked (tab separated) or
 registry_write() {
   local target="$MACS_DIR/$MAC.txt" tmp name dir remote extra f
   mkdir -p "$MACS_DIR" || return
+  rm -f "$MACS_DIR"/.$MAC.*.tmp   # leftovers of interrupted runs
   tmp="$MACS_DIR/.$MAC.$$.tmp"
   {
     echo "mac=$MAC"
+    echo "hwid=$(hardware_id)"
     echo "name=$(scutil --get ComputerName 2>/dev/null || echo "$MAC")"
     echo "model=$(sysctl -n hw.model 2>/dev/null), $(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
     echo "macos=$(sw_vers -productVersion)"
@@ -48,7 +50,44 @@ registry_write() {
     done <<EOF
 $(projects)
 EOF
-  } > "$tmp" && mv "$tmp" "$target"
+  } > "$tmp"
+  mv "$tmp" "$target"   # regardless of the last loop's exit status (an uncloned last project returns 1)
+}
+
+hardware_id() { ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4}'; }
+
+adopt_identity() {  # take over registry entries and snapshots this Mac left under older ids
+  local hw me f old olds="" name dir remote extra sha
+  [ -n "${ROAM_MAC:-}" ] && return 0   # id given explicitly: nothing to take over
+  hw=$(hardware_id); me=$(scutil --get ComputerName 2>/dev/null)
+  for f in $(mac_files); do
+    old=$(basename "$f" .txt)
+    [ "$old" = "$MAC" ] && continue
+    # same machine: same hardware id, or — for entries from before hwid existed — the same computer name
+    if [ -n "$hw" ] && [ "$(val hwid "$f")" = "$hw" ] || { [ -z "$(val hwid "$f")" ] && [ -n "$me" ] && [ "$(val name "$f")" = "$me" ]; }; then
+      olds="$olds $old"; rm -f "$f"
+    fi
+  done
+  [ "$MAC_LOCAL" != "$MAC" ] && case " $olds " in *" $MAC_LOCAL "*) ;; *) olds="$olds $MAC_LOCAL" ;; esac
+  [ -n "$olds" ] || return 0
+  while read -r name dir remote extra; do
+    [ -d "$PROJECTS_DIR/$dir/.git" ] || continue
+    ( cd "$PROJECTS_DIR/$dir" && fetch_all
+      for old in $olds; do
+        sha=$(git rev-parse -q --verify "refs/remotes/roam/$old") || sha=$(git rev-parse -q --verify "refs/roam/$old") || continue
+        if ! git rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null &&
+           git push -q --force origin "$sha:refs/roam/$MAC" 2>/dev/null; then
+          git update-ref "refs/remotes/roam/$MAC" "$sha"; git update-ref "refs/roam/$MAC" "$sha"
+          log "$name: snapshot of $old now belongs to $MAC"
+        fi
+        git rev-parse -q --verify "refs/remotes/roam/$old" >/dev/null && git push -q origin ":refs/roam/$old" 2>/dev/null
+        git update-ref -d "refs/remotes/roam/$old" 2>/dev/null; git update-ref -d "refs/roam/$old" 2>/dev/null
+      done ) &
+  done <<EOF
+$(projects)
+EOF
+  wait
+  log "identity: $MAC took over$olds"
 }
 
 other_local_files() {  # $1 project → "<mac name>\t<path>" from the other Macs' files

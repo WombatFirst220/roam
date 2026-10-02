@@ -15,7 +15,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.1.0
+ROAM_VERSION=1.1.1
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 
 SRC=$0
@@ -27,7 +27,6 @@ HERE=$(cd "$(dirname "$SRC")" && pwd -P)
 CONFIG="$HOME/.config/roam/config"
 LABEL=${ROAM_LABEL:-app.roam.auto}
 AGENT_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-MAC=${ROAM_MAC:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}
 LOG=${ROAM_LOG:-$HOME/Library/Logs/roam.log}
 LOCK=${ROAM_LOCK:-${TMPDIR:-/tmp}/roam.lock}
 CACHE="$HOME/Library/Caches/roam"
@@ -42,6 +41,14 @@ conf_val() {  # $1 key in key=value file $2
 POOL=${ROAM_POOL:-$(conf_val pool "$CONFIG")}
 PROJECTS_DIR=${ROAM_PROJECTS_DIR:-$(conf_val projects_dir "$CONFIG")}
 PROJECTS_DIR=${PROJECTS_DIR:-$HOME/Developer}
+
+# This Mac's id in the pool and in refs/roam/<id>. The Bonjour name (LocalHostName) is no good on its
+# own: macOS appends -2, -7 … whenever the network sees a name clash. So it's read once, the suffix
+# trimmed, and the result kept in the config.
+MAC_LOCAL=${ROAM_HOSTNAME:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}
+MAC=${ROAM_MAC:-$(conf_val mac_id "$CONFIG")}
+MAC_IS_NEW=0
+if [ -z "$MAC" ]; then MAC=$(printf '%s' "$MAC_LOCAL" | sed -E 's/-[0-9]+$//'); MAC_IS_NEW=1; fi
 
 use_pool() {  # derive every path and setting from $POOL
   PROJECTS_CONF="$POOL/projects.conf"
@@ -100,6 +107,12 @@ usage() {
   sed -n '4,14p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
+
+# first run with a stable id: remember it, and take over what this Mac left under older names
+if [ "$MAC_IS_NEW" = 1 ] && [ -f "$CONFIG" ] && [ -z "${ROAM_MAC:-}" ]; then
+  printf 'mac_id = %s\n' "$MAC" >> "$CONFIG"
+fi
+case $CMD in ""|status|park|resume|auto) [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && adopt_identity ;; esac
 
 ERRORS=0
 case $CMD in
