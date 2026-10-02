@@ -191,6 +191,14 @@ resume_project() {  # $1 name
   if in_the_middle; then report err "$name" "merge/rebase in progress — nothing taken over"; return; fi
   own=$(git rev-parse -q --verify "refs/roam/$MAC")
 
+  # Identical already (e.g. the same file arrived on both Macs): just note it, nothing to change
+  if [ "$(git rev-parse HEAD)" = "$(git rev-parse "$sha^")" ] && [ "$(worktree_tree)" = "$(git rev-parse "$sha^{tree}")" ]; then
+    printf '%s\n' "$sha" > "$g/roam-applied"
+    drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
+    report ok "$name" "same as on $(mac_label "$from") already"
+    return
+  fi
+
   # 1. Commits: the local branch must be contained in the snapshot, or commits would get lost.
   branch=$(snap_branch "$sha")
   target=$(git rev-parse "$sha^")
@@ -229,7 +237,7 @@ resume_project() {  # $1 name
   printf '%s\n' "$sha" > "$g/roam-applied"
   # Our own snapshot is now contained in the one we took over — leaving it would offer it again later
   drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
-  report ok "$name" "resumed from $(mac_label "$from") · $(ago "$time") · $branch · $(changes)"
+  report ok "$name" "resumed from $(mac_label "$from") · $(ago "$time") · $branch · $(changes HEAD "$sha")"
   # More than one other Mac with open work: only the newest was taken over
   foreign_snapshots | while read -r s _ m; do
     git merge-base --is-ancestor "$s" "$sha" || report err "$name" "$(mac_label "$m") has open work too that isn't here — resume there and merge"
