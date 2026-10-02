@@ -21,7 +21,7 @@ version_ge() {  # $1 >= $2
   [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$2" ]
 }
 
-have() { command -v "$1" >/dev/null 2>&1 || [ -x "/opt/homebrew/bin/$1" ] || [ -x "/usr/local/bin/$1" ]; }
+have() { command -v "$1" >/dev/null 2>&1 || [ -x "/opt/homebrew/bin/$1" ] || [ -x "/usr/local/bin/$1" ] || [ -x "$HOME/.orbstack/bin/$1" ]; }
 
 xcode_version() { xcodebuild -version 2>/dev/null | awk 'NR==1{print $2}'; }
 
@@ -87,6 +87,15 @@ check_xcode() {  # once per run, if any project uses Xcode
   fi
 }
 
+check_docker() {  # $1 project — Docker CLI, or an installed but never started OrbStack / Docker Desktop
+  if have docker; then res ok "$1" "Docker"
+  elif [ -d /Applications/OrbStack.app ]; then
+    res hint "$1" "Docker (web/deployment): OrbStack is installed but was never started" "open -a OrbStack" "OrbStack sets up the docker command on its first start"
+  elif [ -d /Applications/Docker.app ]; then
+    res hint "$1" "Docker (web/deployment): Docker Desktop is installed but not running" "open -a Docker"
+  else res hint "$1" "Docker (web/deployment)" "brew install --cask orbstack"; fi
+}
+
 check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
   local name=$1 path=$2 remote=$3 extra=$4 pbx target sdk teams t d f mgr elsewhere c required
   if [ ! -d "$path/.git" ]; then
@@ -134,7 +143,7 @@ check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
   [ -n "$(find "$path" -maxdepth 3 -name deno.json -not -path '*/node_modules/*' 2>/dev/null)" ] && {
     have deno && res ok "$name" "Deno" || res hint "$name" "Deno (backend)" "brew install deno"; }
   [ -n "$(find "$path" -maxdepth 3 \( -name 'docker-compose*.yml' -o -name 'compose.yml' -o -name Dockerfile \) -not -path '*/node_modules/*' 2>/dev/null)" ] && {
-    have docker && res ok "$name" "Docker" || res hint "$name" "Docker (web/deployment)" "brew install --cask orbstack"; }
+    check_docker "$name"; }
 
   # extra commands from projects.conf: needs=swiftlint,fastlane
   for c in $(printf '%s' "$extra" | tr ' ' '\n' | sed -n 's/^needs=//p' | tr ',' ' '); do
