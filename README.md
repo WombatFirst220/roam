@@ -38,7 +38,7 @@ brew install wombatfirst220/tap/roam
 roam setup
 ```
 
-That's it — on every Mac. Updates: `brew upgrade wombatfirst220/tap/roam`
+That's it — on every Mac. Updates: `brew update && brew upgrade wombatfirst220/tap/roam`
 (always with the full name — Homebrew also has an unrelated cask called `roam`). The setup wizard walks you through everything:
 
 | | Step | What happens |

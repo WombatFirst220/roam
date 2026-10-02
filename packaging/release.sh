@@ -16,4 +16,4 @@ sed -e "s/@VERSION@/$V/" -e "s/@SHA256@/$SHA/" -e '1,2d' packaging/roam.rb.in > 
 git -C "$TAP" add Formula/roam.rb
 git -C "$TAP" commit -m "roam $V"
 git -C "$TAP" push origin main
-echo "released roam $V — on every Mac: brew upgrade wombatfirst220/tap/roam"
+echo "released roam $V — on every Mac: brew update && brew upgrade wombatfirst220/tap/roam"
