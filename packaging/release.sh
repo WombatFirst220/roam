@@ -8,6 +8,7 @@ cd "$(dirname "$0")/.."
 TAP=../homebrew-tap
 [ -z "$(git status --porcelain)" ] || { echo "working tree not clean"; exit 1; }
 grep -q "^ROAM_VERSION=$V$" roam || { echo "ROAM_VERSION in roam is not $V"; exit 1; }
+tests/run.sh || { echo "tests failed — not released"; exit 1; }
 git tag -a "v$V" -m "roam $V"
 git push origin main "v$V"
 SHA=$(curl -fsSL "https://github.com/WombatFirst220/roam/archive/refs/tags/v$V.tar.gz" | shasum -a 256 | cut -d' ' -f1)

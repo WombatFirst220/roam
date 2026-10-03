@@ -97,7 +97,7 @@ check_docker() {  # $1 project — Docker CLI, or an installed but never started
 }
 
 check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
-  local name=$1 path=$2 remote=$3 extra=$4 pbx target sdk teams t d f mgr elsewhere c required
+  local name=$1 path=$2 remote=$3 extra=$4 pbx target sdk teams t d f mgr elsewhere c required n m
   if [ ! -d "$path/.git" ]; then
     elsewhere=$(cloned_elsewhere "$remote" "$(basename "$path")")
     if [ -n "$elsewhere" ]; then res missing "$name" "cloned as $(short_path "$elsewhere") instead of $(short_path "$path")" "" "roam setup offers to rename it"
@@ -106,6 +106,16 @@ check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
   fi
   if git -C "$path" ls-remote -q --heads origin >/dev/null 2>&1; then res ok "$name" "Remote reachable"
   else res missing "$name" "remote not reachable: $remote" "" "add your SSH key at your git host (roam setup walks you through it)"; fi
+  # Claude Code transcripts the sync app left as NUL bytes: resume restores them from the pool's copy
+  n=0 m=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ -f "$CLAUDE_STORE/$name/${f##*/}" ] && ! is_placeholder "$CLAUDE_STORE/$name/${f##*/}"; then n=$((n + 1)); else m=$((m + 1)); fi
+  done <<EOF
+$(placeholder_transcripts "$path")
+EOF
+  [ $n -gt 0 ] && res hint "$name" "$n Claude Code session$([ $n = 1 ] || echo s) here $([ $n = 1 ] && echo is || echo are) empty (the sync app never downloaded $([ $n = 1 ] && echo it || echo them))" "roam resume" "roam resume restores them from the pool"
+  [ $m -gt 0 ] && res info "$name" "$m Claude Code session$([ $m = 1 ] || echo s) here $([ $m = 1 ] && echo is || echo are) empty, with no good copy in the pool"
 
   # Xcode (Mac-wide parts are covered once by check_xcode)
   pbx=$(xcode_projects "$path")

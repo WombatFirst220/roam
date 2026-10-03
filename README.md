@@ -142,7 +142,8 @@ Macs sync** (iCloud Drive, Dropbox, kDrive, a network share — any will do).
   snapshot until they're in `.gitignore`. Files over 50 MB too.
 - **Claude Code comes along.** Memory (and optionally session transcripts, for
   `claude --resume`) lives in `~/.claude/projects/<path>/`. roam mirrors it through the pool —
-  which is why a project has to live at the same path on every Mac.
+  which is why a project has to live at the same path on every Mac. A transcript your sync app left
+  as an empty placeholder never overwrites a good copy, and `roam resume` restores it from the pool.
 
 ## What `roam doctor` checks
 
@@ -150,7 +151,7 @@ Without any configuration, by looking at your projects:
 
 | Found in a project | Checked |
 |---|---|
-| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code |
+| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, Claude Code sessions the sync app left empty |
 | `*.xcodeproj` | full Xcode, first-launch setup, iOS Simulator, iOS SDK ≥ highest `IPHONEOS_DEPLOYMENT_TARGET`, a signing certificate for every `DEVELOPMENT_TEAM` |
 | `package.json` | Node, installed packages (`npm ci` / `pnpm` / `yarn` by lockfile) |
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |
@@ -192,6 +193,15 @@ Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
   `claude_history = 0`.
 - Plain bash, git and rsync — what macOS ships. Nothing to compile, nothing running but a
   LaunchAgent every few minutes.
+
+## Development
+
+```bash
+tests/run.sh            # two simulated Macs, a pool and a remote in a temp folder
+tests/run.sh resume     # only tests whose name contains "resume"
+```
+
+`packaging/release.sh` runs the tests before it tags a release.
 
 ## Without Homebrew
 
