@@ -67,32 +67,46 @@ Already made the folder, say in Xcode? Run `roam new` inside it, or `roam new ~/
 Public repos can be committed under your GitHub username and its private noreply address, so
 your real name and email stay off the internet.
 
-## The dashboard
+## The app
 
 Just type `roam`:
 
 ```
-  ◆ roam  v1.1.0                                            pool · iCloud Drive/roam
-
-  ╭─ Macs ───────────────────────────────────────────────────────────────────────╮
-  │ ▸ Mac mini            this Mac     macOS 26.1    Xcode 26.1   ✓ ready        │
-  │ ● MacBook Pro         online       macOS 26.1    Xcode 26.1   ✗ 1 missing    │
-  ╰──────────────────────────────────────────────────────────────────────────────╯
-  ╭─ Projects ───────────────────────────────────────────────────────────────────╮
-  │               Mac mini                  MacBook Pro                          │
-  │ MyApp         feature/login ●4 ☁        main ✓                               │
-  │ Website       main ✓                    main ✓                               │
-  │ Backend       main ↑2                   —                                    │
-  │ ✓ clean · ●n uncommitted · ↑n unpushed · ☁ parked · — not cloned             │
-  ╰──────────────────────────────────────────────────────────────────────────────╯
-  ╭─ In flight ────────────────────────────────────── work parked on the remote ─╮
-  │ MyApp         ☁ from this Mac · 2 min ago · feature/login                    │
-  ╰──────────────────────────────────────────────────────────────────────────────╯
-
-   Resume   Park   New   Doctor   Fix   Add   Log   Quit   ←→ ⏎  or a letter
+ ◆ roam  v1.3.0                                                                               14:02
+╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
+│ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
+│   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
+│   Backend        main ↑2                 ││ ☁ parked here · 2m ago · feature/login               │
+│                                          ││                                                      │
+│                                          ││ AI sessions                                          │
+│                                          ││ ✻ Fix the login               this Mac · 2m ●        │
+│                                          ││ ◇ Add dark mode               MacBook Pro · 1 h      │
+│                                          ││     recap   Login works again, README still open.    │
+│                                          ││     you     also cover the expired token case        │
+│                                          ││                                                      │
+│                                          ││ Docs                                                 │
+│                                          ││ README.md · CLAUDE.md · CHANGELOG.md · docs/api.md   │
+╰──────────────────────────────────────────╯╰──────────────────────────────────────────────────────╯
+╭─ Macs ──────────────────────────────────────────────────────────────── pool · iCloud Drive/roam ─╮
+│ ▸ Mac mini             this Mac     macOS 26.1   Xcode 26.1   ✓ ready                            │
+│ ● MacBook Pro          online       macOS 26.1   Xcode 26.1   ✗ 1 missing                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ROAM   ⏎ open  r resume  p park  s sessions  v docs  d doctor  ? help  q quit        ⠹ checking the remotes…
 ```
 
-Every Mac reports its state to the pool, so you see your other Macs even while they sleep.
+Every Mac reports its state to the pool, so you see your other Macs even while they sleep. The app
+opens at once with what the pool knows and asks the remotes in the background.
+
+- **⏎** opens a project: **Sessions** (where each AI session stopped, `⏎` reads it, `c` continues it),
+  **Docs** (README, CLAUDE.md, … with a preview, `⏎` reads it, `o` opens your editor) and **Git**.
+  `⇥` or `1`–`3` switch tabs, `esc` goes back.
+- **r** resume, **p** park, **d** doctor, **f** fix, **n** new, **a** add, **L** log, **u** refresh — park,
+  resume and friends run in the terminal as usual and bring you back afterwards. **?** shows every key.
+- The reader scrolls with `j`/`k`, `space`/`b`, `g`/`G`; `/` searches, `n`/`N` jump, `]`/`[` go to the
+  next or previous heading — or the next prompt in a session.
+- Truecolor in iTerm2, Ghostty, WezTerm, VS Code and Terminal on macOS 26 and later, 256 colors elsewhere
+  (`ROAM_COLOR=256` forces it). `roam classic` — or `ROAM_PLAIN=1` — gives you the previous menu,
+  `roam status` the dashboard as plain text.
 
 ## Where did the AI leave off?
 
@@ -122,7 +136,7 @@ $ roam sessions MyApp
 | `roam continue MyApp` | `claude --resume` / `codex resume` that session, in the project folder |
 | `roam read MyApp` | README, CLAUDE.md, AGENTS.md, TODO, CHANGELOG, docs … rendered in the same reader |
 
-The dashboard shows each project's newest session too, and its menu has **Sessions** and **View**.
+The app shows them too: each project's newest session in the preview, all of them under ⏎ › Sessions.
 
 - **This Mac** is read live from Claude Code (`~/.claude/projects`) and Codex (its own database,
   read-only) — only the end of a transcript, so even 200 MB sessions open instantly.
@@ -137,7 +151,7 @@ The dashboard shows each project's newest session too, and its menu has **Sessio
 
 | Command | When |
 |---|---|
-| `roam` | the dashboard, with a menu (←→ ⏎ or the first letter) |
+| `roam` | the app: projects on every Mac, AI sessions, docs (`roam classic`: the previous menu) |
 | `roam resume` | when you sit down at a Mac — **before** opening Xcode or Claude Code |
 | `roam park` | before you walk away (optional — auto-park runs every 10 min) |
 | `roam doctor` | does this Mac have everything your projects need? |

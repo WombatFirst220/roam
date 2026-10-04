@@ -116,6 +116,9 @@ t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)
   check "bash 4 features: $hits" [ -z "$hits" ] || return 1
+  # bash 3.2 reads the first byte of "…" or "╯" as part of a name: \$name… must be \${name}…
+  hits=$(LC_ALL=C grep -n -E '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$ROOT/roam" "$ROOT"/lib/*.sh)
+  check "unbraced variable before a non-ASCII character: $hits" [ -z "$hits" ] || return 1
   for f in "$ROOT/roam" "$ROOT"/lib/*.sh; do /bin/bash -n "$f" || { fail "syntax error in $f"; return 1; }; done
 }
 
@@ -209,6 +212,37 @@ t_markdown_files_ranked_readme_first() {
   mkdir -p "$p/docs"; echo "# d" > "$p/docs/guide.md"; ln -s CLAUDE.md "$p/AGENTS.md"
   OUT=$(/bin/bash -c ". '$ROOT/lib/md.sh'; md_files '$p'" | cut -f3 | tr '\n' ' ')
   check "wrong order or duplicate: $OUT" [ "$OUT" = "README.md CLAUDE.md CHANGELOG.md docs/guide.md " ]
+}
+
+# ---------------------------------------------------------------- the app
+t_app_frame_fits_the_terminal() {
+  local w line bad=""
+  for w in 80 120; do
+    OUT=$(HOME="$T/A" ROAM_POOL="$T/pool" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+      ROAM_TUI_SNAPSHOT=dash ROAM_COLS=$w ROAM_ROWS=24 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1)
+    case $OUT in *App*) ;; *) fail "project missing at $w columns"; return 1 ;; esac
+    while IFS= read -r line; do
+      line=$(printf '%s' "$line" | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+      [ "$(printf '%s' "$line" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -le $w ] || bad="$w: $line"
+    done <<EOF
+$OUT
+EOF
+  done
+  check "a line is wider than the terminal: $bad" [ -z "$bad" ]
+}
+
+t_app_starts_and_quits_cleanly() {
+  local p
+  ( sleep 2; printf 'j'; sleep 0.5; printf '?'; sleep 0.5; printf 'x'; sleep 0.5; printf 'Q'; sleep 2 ) |
+    HOME="$T/A" ROAM_POOL="$T/pool" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
+    script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
+  p=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 1; kill -0 $p 2>/dev/null || break; done
+  if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit on Q"; return 1; fi
+  OUT=$(LC_ALL=C grep -a -c $'\033\\[?1049l' "$T/pty")
+  check "terminal not restored (alternate screen still on)" [ "$OUT" -ge 1 ] || return 1
+  OUT=$(LC_ALL=C grep -a -o 'unbound variable\|syntax error\|command not found' "$T/pty" | head -3)
+  check "errors on screen: $OUT" [ -z "$OUT" ]
 }
 
 # ---------------------------------------------------------------- run

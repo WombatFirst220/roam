@@ -68,7 +68,19 @@ adopt_identity() {  # take over registry entries and snapshots this Mac left und
       olds="$olds $old"; rm -f "$f"
     fi
   done
-  [ "$MAC_LOCAL" != "$MAC" ] && case " $olds " in *" $MAC_LOCAL "*) ;; *) olds="$olds $MAC_LOCAL" ;; esac
+  # The Bonjour name (…-7) is only an old id if snapshots exist under it. Checked locally: fetching every
+  # project to find out cost each roam command — and every background run — several seconds.
+  if [ "$MAC_LOCAL" != "$MAC" ]; then
+    case " $olds " in *" $MAC_LOCAL "*) ;; *)
+      while read -r name dir remote extra; do
+        [ -d "$PROJECTS_DIR/$dir/.git" ] || continue
+        if git -C "$PROJECTS_DIR/$dir" rev-parse -q --verify "refs/remotes/roam/$MAC_LOCAL" >/dev/null ||
+           git -C "$PROJECTS_DIR/$dir" rev-parse -q --verify "refs/roam/$MAC_LOCAL" >/dev/null; then olds="$olds $MAC_LOCAL"; break; fi
+      done <<EOF
+$(projects)
+EOF
+    esac
+  fi
   [ -n "$olds" ] || return 0
   for old in $olds; do
     [ -d "$POOL/sessions/$old" ] || continue

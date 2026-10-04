@@ -1,7 +1,7 @@
 #!/bin/bash
 # roam — work on the same projects from several Macs, always in sync.
 #
-#   roam              dashboard: every Mac, every project, work in flight
+#   roam              the app: every Mac, every project, AI sessions, docs (roam classic: the old menu)
 #   roam resume       pick up where you left off — run it when you sit down at a Mac
 #   roam park         put this Mac's unfinished work on the remote — before you walk away
 #   roam status       the dashboard without the menu (scripts, quick look)
@@ -18,7 +18,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.2.0
+ROAM_VERSION=1.3.0
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -94,7 +94,7 @@ ago() {  # unix time → "5 min ago"
 }
 projects() { [ -f "$PROJECTS_CONF" ] && grep -v -E '^[[:space:]]*(#|$)' "$PROJECTS_CONF"; }
 
-for f in ui core doctor pool setup new sessions md; do . "$HERE/lib/$f.sh"; done
+for f in ui core doctor pool setup new sessions md tui; do . "$HERE/lib/$f.sh"; done
 
 need_pool() {
   [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && return 0
@@ -128,7 +128,10 @@ ERRORS=0
 case $CMD in
   "")
     need_pool
-    if [ -t 0 ] && [ -t 1 ]; then interactive; else dashboard; fi ;;
+    if [ -n "${ROAM_TUI_SNAPSHOT:-}" ]; then tui_snapshot
+    elif [ -t 0 ] && [ -t 1 ] && [ "$UI_FANCY" = 1 ] && [ -z "${ROAM_PLAIN:-}" ]; then tui_main
+    elif [ -t 0 ] && [ -t 1 ]; then interactive; else dashboard; fi ;;
+  classic) need_pool; interactive ;;
   status)  need_pool; dashboard ;;
   park)    need_pool; lock
            header "park" "$(short_name "$(scutil --get ComputerName)")"; echo
