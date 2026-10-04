@@ -330,6 +330,73 @@ EOF
   say_ok "done. Rejoin any time: roam setup"
 }
 
+# ---------------------------------------------------------------- roam add
+add_cmd() {  # [folder | git remote] [name] — no argument: pick a folder
+  if [ -z "${1:-}" ]; then add_pick
+  elif [ -d "$1" ]; then add_folder "$1"
+  else add_project "$1" "${2:-}"; fi
+}
+
+choose_folder() {  # the macOS folder dialog → path on stdout (nothing if cancelled or no GUI)
+  osascript -e 'try' \
+    -e "return POSIX path of (choose folder with prompt \"Which project folder should roam bring to your other Macs?\" default location (POSIX file \"$PROJECTS_DIR\"))" \
+    -e 'end try' 2>/dev/null | sed 's#/$##'
+}
+
+add_pick() {  # folders in the projects folder that aren't in the pool yet, or any folder via Finder
+  local d r labels="" dirs="" n count pooled
+  [ -t 0 ] || { echo "usage: roam add <folder | git remote>"; return 1; }
+  header "add" "$(short_name "$(scutil --get ComputerName)")"
+  pooled=$(projects | awk '{print $3}' | while read -r x; do remote_norm "$x"; echo; done)
+  for d in "$PROJECTS_DIR"/*/; do
+    d=${d%/}
+    projects | awk '{print $2}' | grep -q -x "$(basename "$d")" && continue
+    if r=$(git -C "$d" remote get-url origin 2>/dev/null); then
+      printf '%s\n' "$pooled" | grep -q -x "$(remote_norm "$r")" && continue
+      labels="$labels$(basename "$d")   ${C_MUTED}$(remote_norm "$r")${C_RESET}"$'\n'
+    else
+      labels="$labels$(basename "$d")   ${C_MUTED}no repo yet — roam creates it on GitHub${C_RESET}"$'\n'
+    fi
+    dirs="$dirs$d"$'\n'
+  done
+  count=$(printf '%s' "$dirs" | grep -c .)
+  printf '\n  %sWhich project should come along to your other Macs?%s\n\n' "$C_BOLD" "$C_RESET"
+  n=$( { printf '%s' "$labels"; echo "Another folder…  ${C_MUTED}(opens Finder)${C_RESET}"; echo "A git address…"; } | choose) || return 1
+  if [ "$n" -le "$count" ]; then add_folder "$(printf '%s' "$dirs" | sed -n "${n}p")"
+  elif [ "$n" = $((count + 1)) ]; then
+    d=$(choose_folder)
+    [ -n "$d" ] || d=$(ask "Folder (drag it here from Finder)" "")
+    d=$(printf '%s' "$d" | sed "s#^~#$HOME#; s#\\ # #g; s#/\$##")   # dragged paths come with escaped spaces
+    [ -n "$d" ] && add_folder "$d"
+  else
+    r=$(ask "Git address (e.g. git@github.com:you/app.git)" "")
+    [ -n "$r" ] && add_project "$r" ""
+  fi
+}
+
+add_folder() {  # $1 a project folder on this Mac → in the pool (new repo on GitHub if it has none yet)
+  local dir name root target
+  [ -d "$1" ] || { say_err "no folder $1"; return 1; }
+  dir=$(cd "$1" && pwd); name=$(basename "$dir")   # the path as Claude Code saw it (symlinks kept)
+  root=$(mkdir -p "$PROJECTS_DIR" && cd "$PROJECTS_DIR" && pwd -P)
+  # every Mac keeps a project at the same path (Claude Code keys its history by path)
+  if [ "$(cd "$dir/.." && pwd -P)" != "$root" ]; then
+    target="$PROJECTS_DIR/$name"
+    [ -e "$target" ] && { say_err "$(short_path "$target") exists already — rename one of them first"; return 1; }
+    say_warn "$(short_path "$dir") is outside $(short_path "$PROJECTS_DIR") — every Mac keeps projects there."
+    say_info "Close Xcode and Claude Code for it first — a running session would lose its folder."
+    confirm "Move it to $(short_path "$target")? (Claude Code history and memory move along)" y || return 1
+    mv "$dir" "$target" && claude_move "$dir" "$target" || { say_err "couldn't move it"; return 1; }
+    say_ok "moved to $(short_path "$target")"
+    dir=$target
+  fi
+  if git -C "$dir" remote get-url origin >/dev/null 2>&1; then
+    add_project "$(git -C "$dir" remote get-url origin)" "$name"
+  else
+    new_project "$dir"   # no remote yet: creates the GitHub repo, pushes, adds it to the pool
+  fi
+}
+
 add_project() {  # $1 remote, $2 name (optional; also the folder name)
   local remote=$1 name=${2:-}
   [ -n "$remote" ] || { echo "usage: roam add <git remote> [name]"; return 1; }
@@ -340,6 +407,6 @@ add_project() {  # $1 remote, $2 name (optional; also the folder name)
   fi
   if projects | awk '{print $1}' | grep -q -x "$name"; then say_err "the name $name is taken — try: roam add $remote <name>"; return 1; fi
   git ls-remote -q --heads "$remote" >/dev/null 2>&1 || { say_err "$remote is not reachable"; return 1; }
-  printf '%-12s %-12s %s\n' "$name" "$name" "$remote" >> "$PROJECTS_CONF"
+  printf '%-12s %-12s %s\n' "$name" "$name" "$(ssh_remote "$remote")" >> "$PROJECTS_CONF"
   say_ok "added ${C_BOLD}$name${C_RESET} ${C_MUTED}— your other Macs get it with roam resume${C_RESET}"
 }

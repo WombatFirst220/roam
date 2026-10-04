@@ -91,7 +91,7 @@ new_project() {  # $1 optional: name, or path of an existing folder
 
   say_info "Who can see it on GitHub?"
   vis=$(printf '%s\n' "Private — only you" "Public — everyone" | choose)
-  [ "$vis" = 1 ] && vis=private || vis=public
+  [ "$vis" = 2 ] && vis=public || vis=private   # only an explicit choice makes it public
 
   # ------------------------------------------------------------ build it
   echo
@@ -129,7 +129,7 @@ new_project() {  # $1 optional: name, or path of an existing folder
   git push -q -u origin main 2>/dev/null || { say_err "push failed — check SSH access (roam setup)"; return 1; }
   say_ok "pushed"
 
-  printf '%-12s %-12s %s\n' "$name" "$name" "$remote" >> "$PROJECTS_CONF"
+  printf '%-12s %-12s %s\n' "$name" "$name" "$(ssh_remote "$remote")" >> "$PROJECTS_CONF"
   registry_write
   say_ok "in the pool — your other Macs get it with ${C_ACCENT}roam resume${C_RESET}"
 

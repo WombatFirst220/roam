@@ -126,8 +126,9 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
     [ "$mode" = resume ] || return 0
     elsewhere=$(cloned_elsewhere "$remote" "$3")
     if [ -n "$elsewhere" ]; then report err "$name" "already cloned as $(short_path "$elsewhere") — roam setup offers to rename it"; return; fi
-    mkdir -p "$PROJECTS_DIR" && git clone -q "$remote" "$path" 2>/dev/null || { report err "$name" "clone failed"; return; }
-    report ok "$name" "cloned into $(short_path "$path")"
+    mkdir -p "$PROJECTS_DIR" || { report err "$name" "can't create $(short_path "$PROJECTS_DIR")"; return; }
+    clone_project "$name" "$remote" "$path" || return
+    report ok "$name" "cloned into $(short_path "$path")$CLONE_NOTE"
   fi
   cd "$path" || return
   if ! fetch_all; then
@@ -143,6 +144,32 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
   return 0
 }
 
+clone_project() {  # $1 name, $2 remote, $3 path — SSH first; whichever of SSH and HTTPS gets in here
+  local name=$1 remote=$2 path=$3 ssh https err tried="" url
+  ssh=$(ssh_remote "$remote") https=$(https_remote "$ssh")
+  CLONE_NOTE=""
+  for url in "$ssh" "$https"; do
+    case " $tried " in *" $url "*) continue ;; esac
+    tried="$tried $url"
+    if err=$(git clone -q "$url" "$path" 2>&1); then
+      # the pool keeps the SSH address; this Mac simply uses what works here
+      [ "$url" != "$ssh" ] && CLONE_NOTE=" ${C_MUTED}(over HTTPS — SSH has no access from this Mac)${C_RESET}"
+      [ "$remote" != "$ssh" ] && pool_set_remote "$name" "$ssh" && log "$name: pool address $remote → $ssh"
+      return 0
+    fi   # a failed clone leaves nothing behind, and never touches a folder that was already there
+  done
+  # git's own reason, in one line — and the usual cause behind it
+  err=$(printf '%s\n' "$err" | grep -v '^Cloning' | sed 's/^fatal: //; s/^ERROR: //' | head -1)
+  case $err in
+    *"could not read Username"*|*"terminal prompts disabled"*|*"Authentication failed"*)
+      report err "$name" "clone failed: no access over SSH or HTTPS here — add this Mac's SSH key (roam setup) or log in once: gh auth login" ;;
+    *"not found"*|*"Permission denied"*|*"Could not read from remote"*)
+      report err "$name" "clone failed: no access to $ssh from this Mac — ${err:-check your SSH key}" ;;
+    *) report err "$name" "clone failed: ${err:-unknown reason}" ;;
+  esac
+  return 1
+}
+
 render_report() {  # $1 report file
   local level name msg icon
   while IFS="$TAB" read -r level name msg; do
@@ -155,6 +182,7 @@ render_report() {  # $1 report file
 run_all() {  # $1 park|resume|auto → sets ERRORS
   local mode=$1 name dir remote extra out verb
   ERRORS=0
+  pool_prefer_ssh
   case $mode in park) verb="parking" ;; resume) verb="resuming" ;; *) verb="syncing" ;; esac
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
@@ -357,8 +385,7 @@ interactive() {
       Sessions) ( sessions_menu ); quick=quick ;;
       View)   ( cd / && read_cmd "" ); quick=quick ;;   # from / the picker always asks which project
       New)    ( new_project ); pause ;;
-      Add)    r=$(ask "Git remote of the project (e.g. git@github.com:you/app.git)" "")
-              [ -n "$r" ] && add_project "$r" ""; pause ;;
+      Add)    ( add_cmd "" ); pause ;;
       Log)    echo; tail -n 25 "$LOG" 2>/dev/null | sed 's/^/  /' || say_info "no log yet"; pause; quick=quick ;;
       Quit)   echo; return 0 ;;
     esac

@@ -53,6 +53,18 @@ That's it — on every Mac. Updates: `brew update && brew upgrade wombatfirst220
 
 Run `roam setup` again any time — it confirms what's fine and repairs what isn't.
 
+## Take a project along
+
+```bash
+roam add
+```
+
+roam lists the folders in `~/Developer` that aren't in the pool yet — or opens Finder for any other
+folder. A folder with a GitHub repo joins the pool as it is; one without gets its repo first (private
+unless you say public), exactly like `roam new`. A folder outside `~/Developer` moves there, Claude Code
+history included, because every Mac keeps a project at the same path. `roam add ~/Desktop/MyApp`,
+`roam add .` or `roam add git@github.com:you/app.git` skip the question.
+
 ## Start a new project
 
 ```bash
@@ -72,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.3.1                                                                               14:02
+ ◆ roam  v1.3.2                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -163,7 +175,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam doctor` | does this Mac have everything your projects need? |
 | `roam fix` | fixes what doctor found, asking before every step |
 | `roam new [name]` | starts a project: folder, `.gitignore`, GitHub repo, pool — in one go |
-| `roam add <git-url>` | adds an existing repo; every Mac gets it on its next `roam resume` |
+| `roam add [folder]` | takes a project along: pick its folder (or Finder), or give a path or git address |
 | `roam sessions [project]` | AI sessions on every Mac and where they stopped |
 | `roam session <project> [n]` | read a session |
 | `roam continue <project> [n]` | pick a session up again in Claude Code or Codex |
@@ -236,6 +248,11 @@ Everything lives in the pool folder, so it's the same on every Mac.
 MyApp        MyApp        git@github.com:you/my-app.git         local=ios/Config/Local.xcconfig
 Website      Website      git@github.com:you/website.git        needs=hugo
 ```
+
+Remotes are kept as SSH addresses — they work on every Mac with a key, without a stored password.
+`roam add` and `roam new` turn an `https://` GitHub, GitLab, Bitbucket or Codeberg address into SSH, and
+an older HTTPS entry is switched on the next run. Where SSH has no access (a Mac whose key belongs to
+another account), roam clones over HTTPS instead and says so.
 
 - `local=a,b` — ignored files a project can't run without (missing → ✗)
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)

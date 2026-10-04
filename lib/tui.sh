@@ -486,7 +486,7 @@ dash_key() {
     d) tui_outside "Doctor" 'doctor_run; doctor_show; registry_write' ;;
     f) tui_outside "Fix" 'doctor_run; fix_run; doctor_run; registry_write' ;;
     n) tui_outside "New project" 'new_project'; tui_refresh ;;
-    a) tui_outside "Add a project" 'r=$(ask "Git remote of the project (e.g. git@github.com:you/app.git)" ""); [ -n "$r" ] && add_project "$r" ""'; tui_refresh ;;
+    a) tui_outside "" 'add_cmd ""'; tui_refresh ;;
     L) log_open ;;
     u) tui_refresh fetch ;;
     c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;

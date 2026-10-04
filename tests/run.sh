@@ -33,6 +33,13 @@ on() {  # $1 Mac, rest: roam arguments — runs roam as that Mac, output in $OUT
   RC=$?
 }
 
+second_remote() {  # $1 name → path of another bare remote with one commit
+  git init -q --bare "$T/$1.git"
+  git -C "$T/seed" push -q "$T/$1.git" HEAD:main 2>/dev/null
+  git -C "$T/$1.git" symbolic-ref HEAD refs/heads/main
+  echo "$T/$1.git"
+}
+
 claude_dir() { echo "$T/$1/.claude/projects/$(printf '%s' "$T/$1/dev/App" | sed 's#[^A-Za-z0-9]#-#g')"; }
 
 # ---------------------------------------------------------------- assertions
@@ -120,6 +127,71 @@ t_scripts_are_bash32_clean() {
   hits=$(LC_ALL=C grep -n -E '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$ROOT/roam" "$ROOT"/lib/*.sh)
   check "unbraced variable before a non-ASCII character: $hits" [ -z "$hits" ] || return 1
   for f in "$ROOT/roam" "$ROOT"/lib/*.sh; do /bin/bash -n "$f" || { fail "syntax error in $f"; return 1; }; done
+}
+
+t_clone_failure_says_why() {
+  rm -rf "$T/B/dev/App"
+  printf 'App  App  %s\n' "$T/does-not-exist.git" > "$T/pool/projects.conf"
+  on B resume
+  case $OUT in *"clone failed: "?*) ;; *) fail "no reason given"; return 1 ;; esac
+}
+
+t_pool_keeps_ssh_addresses() {
+  local f
+  f=$(/bin/bash -c ". '$ROOT/lib/doctor.sh'; ssh_remote https://github.com/me/app; echo; ssh_remote https://github.com/me/app.git/; echo
+    ssh_remote https://user@gitlab.com/g/x.git; echo; ssh_remote git@github.com:me/app.git; echo; ssh_remote https://example.com/a/b; echo
+    https_remote git@github.com:me/app.git")
+  check "conversions wrong: $f" [ "$f" = "git@github.com:me/app.git
+git@github.com:me/app.git
+git@gitlab.com:g/x.git
+git@github.com:me/app.git
+https://example.com/a/b
+https://github.com/me/app.git" ]
+}
+
+t_clone_uses_ssh_and_fixes_an_https_pool_entry() {
+  # this "Mac" reaches the repo only over SSH: git maps that address to the test remote, HTTPS goes nowhere
+  printf '[url "%s"]\n\tinsteadOf = git@github.com:me/app.git\n' "$T/remote.git" > "$T/B/.gitconfig"
+  printf 'App  App  https://github.com/me/app\n' > "$T/pool/projects.conf"
+  rm -rf "$T/B/dev/App"
+  on B resume
+  check "not cloned" [ -d "$T/B/dev/App/.git" ] || return 1
+  check "pool entry still HTTPS" grep -q 'git@github.com:me/app.git' "$T/pool/projects.conf"
+}
+
+t_clone_falls_back_to_https_where_ssh_has_no_access() {
+  # the other way round: only HTTPS gets in (like a Mac whose SSH key belongs to another account)
+  printf '[url "%s"]\n\tinsteadOf = https://github.com/me/app.git\n' "$T/remote.git" > "$T/B/.gitconfig"
+  printf 'App  App  git@github.com:me/app.git\n' > "$T/pool/projects.conf"
+  rm -rf "$T/B/dev/App"
+  on B resume
+  check "not cloned over HTTPS" [ -d "$T/B/dev/App/.git" ] || return 1
+  case $OUT in *"over HTTPS"*) ;; *) fail "no note that HTTPS was used"; return 1 ;; esac
+  check "pool entry changed" grep -q 'git@github.com:me/app.git' "$T/pool/projects.conf"
+}
+
+t_clone_never_touches_an_existing_folder() {
+  rm -rf "$T/B/dev/App"; mkdir -p "$T/B/dev/App"; echo mine > "$T/B/dev/App/notes.txt"
+  on B resume
+  check "existing folder was touched" [ "$(cat "$T/B/dev/App/notes.txt" 2>/dev/null)" = mine ]
+}
+
+t_add_takes_a_folder() {
+  git clone -q "$(second_remote other)" "$T/A/dev/Other" 2>/dev/null
+  on A add "$T/A/dev/Other"
+  check "folder not added" grep -q '^Other ' "$T/pool/projects.conf"
+}
+
+t_add_moves_a_folder_from_elsewhere_with_its_claude_history() {
+  local old_key new_key
+  mkdir -p "$T/A/elsewhere"; git clone -q "$(second_remote side)" "$T/A/elsewhere/Side" 2>/dev/null
+  old_key=$(printf '%s' "$(cd "$T/A/elsewhere/Side" && pwd)" | sed 's#[^A-Za-z0-9]#-#g')
+  mkdir -p "$T/A/.claude/projects/$old_key/memory"; echo note > "$T/A/.claude/projects/$old_key/memory/m.md"
+  on A add "$T/A/elsewhere/Side"   # no terminal: confirm takes its default (yes)
+  check "not moved into the projects folder" [ -d "$T/A/dev/Side/.git" ] || return 1
+  check "not added" grep -q '^Side ' "$T/pool/projects.conf" || return 1
+  new_key=$(printf '%s' "$T/A/dev/Side" | sed 's#[^A-Za-z0-9]#-#g')   # roam's own spelling: projects folder + name
+  check "Claude memory didn't move along" [ -f "$T/A/.claude/projects/$new_key/memory/m.md" ]
 }
 
 # ---------------------------------------------------------------- AI sessions

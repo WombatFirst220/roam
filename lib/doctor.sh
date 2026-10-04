@@ -41,6 +41,38 @@ remote_norm() {  # git@host:a/b.git, https://host/a/b → host/a/b (lower case)
   printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -E 's#^(ssh://)?git@([^:/]+)[:/]#\2/#; s#^https?://([^@/]*@)?##; s#\.git$##; s#/$##'
 }
 
+# The pool keeps SSH addresses: they work on every Mac with a key, without a stored password. HTTPS is
+# what a browser hands out, so roam turns it into SSH where the host's SSH address is predictable.
+ssh_remote() {  # https://github.com/a/b(.git) → git@github.com:a/b.git; anything else unchanged
+  printf '%s' "$1" | sed -E '/^https?:\/\/([^@\/]*@)?(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)\/[^\/]+\/[^\/]+/{
+    s#/$##; s#\.git$##
+    s#^https?://([^@/]*@)?([^/]+)/([^/]+)/([^/]+)$#git@\2:\3/\4.git#
+  }'
+}
+https_remote() {  # git@github.com:a/b.git → https://github.com/a/b.git; anything else unchanged
+  printf '%s' "$1" | sed -E 's#^(ssh://)?git@(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org)[:/]([^/]+)/([^/]+)$#https://\2/\3/\4#'
+}
+
+pool_set_remote() {  # $1 project name, $2 new remote — rewrites that one line of projects.conf, atomically
+  local tmp="$PROJECTS_CONF.$$.tmp"
+  awk -v n="$1" -v r="$2" '
+    /^[[:space:]]*(#|$)/ || $1 != n { print; next }
+    { extra = ""; for (i = 4; i <= NF; i++) extra = extra " " $i; printf "%-12s %-12s %s%s\n", $1, $2, r, extra }
+  ' "$PROJECTS_CONF" > "$tmp" && mv "$tmp" "$PROJECTS_CONF"
+}
+
+pool_prefer_ssh() {  # HTTPS addresses in the pool become SSH (see ssh_remote); clones fall back to HTTPS anyway
+  local name dir remote extra ssh
+  while read -r name dir remote extra; do
+    [ -n "$name" ] || continue
+    ssh=$(ssh_remote "$remote")
+    [ "$ssh" != "$remote" ] || continue
+    pool_set_remote "$name" "$ssh" && log "$name: pool address $remote → $ssh"
+  done <<EOF
+$(projects)
+EOF
+}
+
 cloned_elsewhere() {  # $1 remote, $2 expected dir name → path of an existing clone under another name
   local want d
   want=$(remote_norm "$1")

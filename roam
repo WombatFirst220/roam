@@ -9,7 +9,7 @@
 #   roam fix          fix what doctor found, one step at a time
 #   roam setup        the setup wizard — on a new Mac, this is the only thing you run
 #   roam new [name]   start a project: folder, .gitignore, GitHub repo, pool — in one go
-#   roam add <remote> [name]   add an existing repo to the pool
+#   roam add [folder|remote]   take a project along: pick its folder, or give a path or git address
 #   roam sessions [project]    AI sessions (Claude Code, Codex) on every Mac, and where they stopped
 #   roam session <project> [n] read a session      roam continue <project> [n]  pick it up again
 #   roam read [project] [file] the project's README, CLAUDE.md, docs … in the reader
@@ -18,7 +18,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.3.1
+ROAM_VERSION=1.3.2
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -147,7 +147,7 @@ case $CMD in
            doctor_run; fix_run; doctor_run; registry_write ;;
   setup|join) setup "${2:-}" ;;
   leave)   need_pool; leave ;;
-  add)     need_pool; add_project "${2:-}" "${3:-}" ;;
+  add)     need_pool; add_cmd "${2:-}" "${3:-}" ;;
   new)     need_pool; new_project "${2:-}" ;;
   sessions) need_pool; sessions_cmd "${2:-}" "${3:-}" ;;
   session) need_pool; session_cmd "${2:-}" "${3:-}" ;;
