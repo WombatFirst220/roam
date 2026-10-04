@@ -245,9 +245,23 @@ t_app_starts_and_quits_cleanly() {
   check "errors on screen: $OUT" [ -z "$OUT" ]
 }
 
+t_app_parks_live_and_comes_back() {
+  local p
+  echo "changed in the app" > "$T/A/dev/App/a.txt"
+  ( sleep 2; printf 'p'; sleep 6; printf '\r'; sleep 1; printf 'Q'; sleep 2 ) |
+    HOME="$T/A" ROAM_POOL="$T/pool" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_LOCK="$T/A.lock" \
+    ROAM_NO_ANIM=1 script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
+  p=$!
+  for _ in $(seq 20); do sleep 1; kill -0 $p 2>/dev/null || break; done
+  if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit after parking"; return 1; fi
+  check "nothing parked on the remote" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A >/dev/null || return 1
+  OUT=$(LC_ALL=C grep -a -c 'All parked' "$T/pty")
+  check "no 'All parked' in the app" [ "$OUT" -ge 1 ]
+}
+
 # ---------------------------------------------------------------- run
 printf '\n  roam tests %s(%s)%s\n\n' "$D" "$(/bin/bash -c 'echo $BASH_VERSION')" "$N"
 for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do run "$t"; done
-[ -n "$T" ] && rm -rf "$T"
+[ -n "$T" ] && [ -z "${KEEP:-}" ] && rm -rf "$T"
 printf '\n  %d passed' "$PASS"; [ $FAIL -gt 0 ] && printf ', %s%d failed%s' "$R" "$FAIL" "$N"; echo; echo
 [ $FAIL -eq 0 ]

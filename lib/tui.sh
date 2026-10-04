@@ -92,12 +92,14 @@ tui_enter() {
   TUI_STTY=$(stty -g </dev/tty)
   stty -echo -icanon </dev/tty
   printf '\033[?1049h\033[?25l\033[?7l\033]0;roam\007' >/dev/tty
+  # mouse: wheel and clicks (hold ⌥ or ⇧ to select text as usual); ROAM_MOUSE=0 turns it off
+  [ "${ROAM_MOUSE:-1}" = 0 ] || printf '\033[?1000h\033[?1006h' >/dev/tty
   tui_io_start
   FULL=1 PREV=()
 }
 tui_leave() {
   tui_io_stop
-  printf '\033[0m\033[?7h\033[?25h\033[?1049l' >/dev/tty
+  printf '\033[?1000l\033[?1006l\033[0m\033[?7h\033[?25h\033[?1049l' >/dev/tty
   [ -n "${TUI_STTY:-}" ] && stty "$TUI_STTY" </dev/tty 2>/dev/null
   TUI_STTY=""
 }
@@ -140,6 +142,9 @@ tui_key() {  # next event → KEY: TICK, ENTER, TAB, BTAB, ESC, BS, UP DOWN LEFT
       case $s in
         '[A'|OA) KEY=UP ;; '[B'|OB) KEY=DOWN ;; '[C'|OC) KEY=RIGHT ;; '[D'|OD) KEY=LEFT ;;
         '[5~') KEY=PGUP ;; '[6~') KEY=PGDN ;; '[H'|'[1~'|OH) KEY=HOME ;; '[F'|'[4~'|OF) KEY=END ;; '[Z') KEY=BTAB ;;
+        '[<'*[Mm])   # SGR mouse: \e[<button;x;y M (press) or m (release)
+          KEY=MOUSE; s=${s#??}; MOUSE_UP=0; case $s in *m) MOUSE_UP=1 ;; esac; s=${s%?}
+          MOUSE_B=${s%%;*}; s=${s#*;}; MOUSE_X=${s%%;*}; MOUSE_Y=${s#*;} ;;
         *) KEY=ESC ;;
       esac ;;
     *) KEY=$c ;;
@@ -326,6 +331,7 @@ tui_poll() {  # on every tick: pick up what the background jobs finished
   if [ -f "$TUI_DIR/sessions.done" ] && [ "$BUSY" = "reading AI sessions" ]; then BUSY=""; PV_KEY=""; DIRTY=1; fi
   # a view waiting for its data: draw again once it's there
   case $VIEW in
+    run) DIRTY=1 ;;
     dash) [ -n "$BUSY" ] && { [ ! -f "$TUI_DIR/s.$SEL" ] || [ ! -f "$TUI_DIR/d.$SEL" ]; } && [ $((TICKS % 3)) = 0 ] && DIRTY=1 ;;
     proj) [ "$PTAB" = 0 ] && [ ! -f "$TUI_DIR/s.$PJ" ] && DIRTY=1
           [ "$PTAB" = 1 ] && [ ! -f "$TUI_DIR/d.$PJ" ] && DIRTY=1 ;;
@@ -379,12 +385,15 @@ dash_draw() {
   mh=$(( NM + 2 )); [ $mh -gt 7 ] && mh=7
   ph=$(( ROWS - 2 - mh ))
   if [ $split = 1 ]; then lw=$(( COLS * 44 / 100 )); rw=$(( COLS - lw )); else lw=$COLS; rw=0; fi
-  # projects list
+  # projects list (only those matching the filter)
+  dash_visible
   PC=()
-  local h=$((ph - 2)) off=0
-  [ $SEL -ge $h ] && off=$((SEL - h + 1))
-  for ((i = 0; i < h && i + off < NP; i++)); do
-    r=$((i + off))
+  local h=$((ph - 2)) off=0 pos=0 nv=${#VIDX[@]}
+  for ((i = 0; i < nv; i++)); do [ "${VIDX[$i]}" = "$SEL" ] && pos=$i; done
+  [ $pos -ge $h ] && off=$((pos - h + 1))
+  DASH_OFF=$off DASH_LW=$lw DASH_H=$h
+  for ((i = 0; i < h && i + off < nv; i++)); do
+    r=${VIDX[$((i + off))]}
     tfit "${P_N[$r]}" 14; tpad "${K_B}$FIT${K_R}" 15
     local c="$PAD${P_CELL[$r]}"
     if [ -f "$TUI_DIR/s.$r" ] && read_lines "$TUI_DIR/s.$r" && [ ${#LN[@]} -gt 0 ]; then
@@ -400,11 +409,12 @@ EOF
     if [ $r -eq $SEL ]; then sel_row "$c" $((lw - 4)); else plain_row "$c"; fi
     PC[$i]=$REPLY
   done
+  [ $nv -eq 0 ] && [ $NP -gt 0 ] && PC[0]="${K_MUTED}nothing matches “${FILTER}” — esc clears the filter${K_R}"
   [ $NP -eq 0 ] && PC[0]="${K_MUTED}no projects yet — a adds one${K_R}"
-  panel $lw $ph "Projects" 1 "$NP"
+  if [ -n "$FILTER" ]; then panel $lw $ph "Projects /$FILTER" 1 "$nv of $NP"; else panel $lw $ph "Projects" 1 "$NP"; fi
   for ((i = 0; i < ph; i++)); do S[$((top + i))]=${PB[$i]}; done
   # preview of the selected project
-  if [ $split = 1 ] && [ $NP -gt 0 ]; then
+  if [ $split = 1 ] && [ $nv -gt 0 ]; then
     dash_preview $rw
     PC=("${PV[@]}")
     panel $rw $ph "${P_N[$SEL]}" 0 "⏎ open"
@@ -417,27 +427,82 @@ EOF
   for ((i = 0; i < mh; i++)); do S[$((top + ph + i))]=${PB[$i]}; done
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
-  statusbar "ROAM" "⏎:open r:resume p:park s:sessions v:docs d:doctor ?:help q:quit" "$right"
+  if [ -n "$PROMPT" ]; then prompt_bar "filter"
+  else statusbar "ROAM" "⏎:open /:filter r:resume p:park s:sessions v:docs d:doctor ?:help q:quit" "$right"; fi
+}
+
+dash_visible() {  # VIDX[] = projects whose name matches FILTER (letters in order, any case); keeps SEL on one of them
+  local i g="*" k found=0
+  VIDX=()
+  if [ -n "$FILTER" ]; then for ((k = 0; k < ${#FILTER}; k++)); do g="$g${FILTER:$k:1}*"; done; fi
+  shopt -s nocasematch
+  for ((i = 0; i < NP; i++)); do
+    # shellcheck disable=SC2053
+    [[ ${P_N[$i]} == $g ]] && { VIDX[${#VIDX[@]}]=$i; [ "$i" = "$SEL" ] && found=1; }
+  done
+  shopt -u nocasematch
+  [ $found = 1 ] || [ ${#VIDX[@]} -eq 0 ] || SEL=${VIDX[0]}
+}
+
+dash_move() {  # $1 steps (negative: up) through the visible projects
+  local i pos=0 nv
+  dash_visible; nv=${#VIDX[@]}
+  [ $nv -gt 0 ] || return
+  for ((i = 0; i < nv; i++)); do [ "${VIDX[$i]}" = "$SEL" ] && pos=$i; done
+  pos=$((pos + $1)); [ $pos -lt 0 ] && pos=0; [ $pos -ge $nv ] && pos=$((nv - 1))
+  SEL=${VIDX[$pos]}
+}
+
+prompt_bar() {  # $1 label — the bottom line while typing a filter or a search
+  tpad "$K_BAR ${K_ACC}/${K_R}$K_BAR$PROMPT_TEXT${K_ACC}▏${K_R}$K_BAR  ${K_MUTED}$1 · ⏎ keep · esc clear${K_R}" "$COLS"
+  S[$((ROWS - 1))]="$K_BAR${PAD//$'\033[0m'/$'\033[0m'$K_BAR}"
 }
 
 dash_key() {
+  if [ -n "$PROMPT" ]; then   # typing a filter: the list narrows with every key
+    case $1 in
+      ENTER) PROMPT="" ;;
+      ESC) PROMPT="" FILTER="" ;;
+      BS) PROMPT_TEXT=${PROMPT_TEXT%?}; FILTER=$PROMPT_TEXT ;;
+      UP) dash_move -1 ;; DOWN) dash_move 1 ;;
+      MOUSE|TICK|LEFT|RIGHT|TAB|BTAB|PGUP|PGDN|HOME|END) ;;
+      *) PROMPT_TEXT="$PROMPT_TEXT$1"; FILTER=$PROMPT_TEXT ;;
+    esac
+    return
+  fi
   case $1 in
-    UP|k) [ $SEL -gt 0 ] && SEL=$((SEL - 1)) ;;
-    DOWN|j) [ $SEL -lt $((NP - 1)) ] && SEL=$((SEL + 1)) ;;
-    HOME|g) SEL=0 ;; END|G) SEL=$((NP > 0 ? NP - 1 : 0)) ;;
-    ENTER|RIGHT|l) [ $NP -gt 0 ] && proj_open 0 ;;
-    s) [ $NP -gt 0 ] && proj_open 0 ;;
-    v) [ $NP -gt 0 ] && proj_open 1 ;;
-    r) tui_outside "Resume" 'lock; run_all resume; registry_write; finish_resume'; tui_refresh ;;
-    p) tui_outside "Park" 'lock; run_all park; registry_write; finish_park'; tui_refresh ;;
+    UP|k) dash_move -1 ;;
+    DOWN|j) dash_move 1 ;;
+    HOME|g) dash_move -9999 ;; END|G) dash_move 9999 ;;
+    PGUP) dash_move -10 ;; PGDN) dash_move 10 ;;
+    /) PROMPT=1 PROMPT_TEXT=$FILTER ;;
+    ESC) FILTER="" ;;
+    MOUSE) dash_mouse ;;
+    ENTER|RIGHT|l) [ ${#VIDX[@]} -gt 0 ] && proj_open 0 ;;
+    s) [ ${#VIDX[@]} -gt 0 ] && proj_open 0 ;;
+    v) [ ${#VIDX[@]} -gt 0 ] && proj_open 1 ;;
+    r) run_start resume ;;
+    p) run_start park ;;
     d) tui_outside "Doctor" 'doctor_run; doctor_show; registry_write' ;;
     f) tui_outside "Fix" 'doctor_run; fix_run; doctor_run; registry_write' ;;
     n) tui_outside "New project" 'new_project'; tui_refresh ;;
     a) tui_outside "Add a project" 'r=$(ask "Git remote of the project (e.g. git@github.com:you/app.git)" ""); [ -n "$r" ] && add_project "$r" ""'; tui_refresh ;;
     L) log_open ;;
     u) tui_refresh fetch ;;
-    c) [ $NP -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
+    c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
     q|Q) QUIT=1 ;;
+  esac
+}
+
+dash_mouse() {  # wheel moves the selection; a click selects a project, a click on the selected one opens it
+  case $MOUSE_B in
+    64) dash_move -1 ;; 65) dash_move 1 ;;
+    0) [ "$MOUSE_UP" = 1 ] && return
+       local row=$((MOUSE_Y - 3 + DASH_OFF))   # screen row 1 is the top bar, 2 the panel's border
+       [ "$MOUSE_X" -le "$DASH_LW" ] && [ "$MOUSE_Y" -ge 3 ] && [ "$MOUSE_Y" -lt $((3 + DASH_H)) ] || return
+       dash_visible
+       [ $row -lt ${#VIDX[@]} ] || return
+       if [ "${VIDX[$row]}" = "$SEL" ]; then proj_open 0; else SEL=${VIDX[$row]}; fi ;;
   esac
 }
 
@@ -500,6 +565,7 @@ proj_draw() {
     PC=()
     local h=$((lh - 2)) off=0
     [ $PSEL -ge $h ] && off=$((PSEL - h + 1))
+    PROJ_OFF=$off PROJ_H=$h
     for ((i = 0; i < h && i + off < n; i++)); do
       row=${LN[$((i + off))]}
       if [ $PTAB = 0 ]; then l=$(sess_line "$row" "" $((COLS - 52)))
@@ -551,8 +617,29 @@ proj_key() {
     c) [ $PTAB = 0 ] && tui_outside "" "continue_cmd '${P_N[$PJ]}' $((PSEL + 1))" ;;
     o) if [ $PTAB = 1 ]; then proj_items; row=${LN[$PSEL]-}; row=${row#*$'\t'}; row=${row#*$'\t'}; row=${row%%$'\t'*}
          [ -n "$row" ] && tui_outside "" "${EDITOR:-open} '$PJ_PATH/$row'" nopause; fi ;;
+    MOUSE) proj_mouse ;;
     ESC|q|BS) VIEW=dash ;;
     Q) QUIT=1 ;;
+  esac
+}
+
+proj_mouse() {  # wheel moves through the list; click a tab, or a row (the selected row again: open it)
+  local i x=2 t row
+  case $MOUSE_B in
+    64) [ $PSEL -gt 0 ] && PSEL=$((PSEL - 1)) ;;
+    65) proj_items; [ $PSEL -lt $((${#LN[@]} - 1)) ] && PSEL=$((PSEL + 1)) ;;
+    0) [ "$MOUSE_UP" = 1 ] && return
+       if [ "$MOUSE_Y" = 2 ]; then   # the tab row: " 1 Sessions   2 Docs   3 Git"
+         i=0; for t in $TABS; do
+           [ "$MOUSE_X" -ge $x ] && [ "$MOUSE_X" -lt $((x + ${#t} + 4)) ] && { PTAB=$i; PSEL=0; return; }
+           x=$((x + ${#t} + 5)); i=$((i + 1))
+         done; return
+       fi
+       [ "$PTAB" = 2 ] && return
+       row=$((MOUSE_Y - 4 + PROJ_OFF))   # rows 3 and 4: the list's border, then its first line
+       [ "$MOUSE_Y" -ge 4 ] && [ "$MOUSE_Y" -lt $((4 + PROJ_H)) ] || return
+       proj_items; [ $row -lt ${#LN[@]} ] || return
+       if [ $row = $PSEL ]; then proj_key ENTER; else PSEL=$row; fi ;;
   esac
 }
 
@@ -602,7 +689,7 @@ reader_draw() {
   for ((i = 0; i < ROWS - 2; i++)); do S[$((i + 1))]=${PB[$i]}; done
   tfit "$RTITLE" $((COLS - 24))
   topbar "${K_LINE}›${K_R} ${K_B}$FIT${K_R}" ""
-  if [ -n "$PROMPT" ]; then S[$((ROWS - 1))]="${K_BAR} ${K_ACC}/${K_R}${K_BAR}$PROMPT_TEXT${K_R}${K_BAR}▏"; tpad "${S[$((ROWS - 1))]}" "$COLS"; S[$((ROWS - 1))]="$PAD"
+  if [ -n "$PROMPT" ]; then prompt_bar "search"
   else statusbar "READ" "j/k:scroll space/b:page g/G:ends /:search n/N:next ]/[:heading$([ -n "$RSRC" ] && echo ' o:editor') esc:back" "${RQ:+${K_MUTED}/$RQ${K_R}}"; fi
 }
 
@@ -634,7 +721,7 @@ reader_key() {
       ENTER) RQ=$PROMPT_TEXT PROMPT="" RHIT=$((RTOP - 1)); reader_find 1 ;;
       ESC) PROMPT="" ;;
       BS) PROMPT_TEXT=${PROMPT_TEXT%?} ;;
-      TICK|UP|DOWN|LEFT|RIGHT|TAB|BTAB|PGUP|PGDN|HOME|END) ;;
+      MOUSE|TICK|UP|DOWN|LEFT|RIGHT|TAB|BTAB|PGUP|PGDN|HOME|END) ;;
       *) PROMPT_TEXT="$PROMPT_TEXT$1" ;;
     esac
     return
@@ -647,10 +734,78 @@ reader_key() {
     /) PROMPT=1 PROMPT_TEXT="" ;;
     n) reader_find 1 ;; N) reader_find -1 ;;
     ']') reader_heading 1 ;; '[') reader_heading -1 ;;
+    MOUSE) case $MOUSE_B in 64) RTOP=$((RTOP - 3)) ;; 65) RTOP=$((RTOP + 3)) ;; esac ;;
     o) [ -n "$RSRC" ] && tui_outside "" "${EDITOR:-open} '$RSRC'" nopause ;;
     ESC|q|BS|LEFT|h) VIEW=$RBACK ;;
     Q) QUIT=1 ;;
   esac
+}
+
+# ---------------------------------------------------------------- view: park / resume, live
+# The same run_project as on the command line, one project after another in a background job; each
+# project's report lands in run.N, the tick turns its spinner into ✓ / ✗.
+run_start() {  # $1 park|resume
+  RUN_MODE=$1 RUN_BACK=$VIEW RUN_T0=$SECONDS
+  rm -f "$TUI_DIR"/run.*
+  ( lock
+    : > "$TUI_DIR/run.locked"
+    for ((i = 0; i < NP; i++)); do
+      echo "$i" > "$TUI_DIR/run.cur"
+      ( REPORT_OUT="$TUI_DIR/run.$i.tmp"; : > "$REPORT_OUT"; run_project "$RUN_MODE" "${P_N[$i]}" "${P_D[$i]}" "$(projects | awk -v n="${P_N[$i]}" '$1 == n {print $3; exit}')" )
+      mv "$TUI_DIR/run.$i.tmp" "$TUI_DIR/run.$i"
+    done
+    registry_write
+    : > "$TUI_DIR/run.done" ) </dev/null >/dev/null 2>&1 &
+  RUN_PID=$!
+  TUI_JOBS="${TUI_JOBS:-} $RUN_PID"
+  VIEW=run
+}
+
+run_draw() {
+  local i l lvl name msg icon errs=0 done=0 cur=-1 verb pct
+  [ -f "$TUI_DIR/run.cur" ] && read -r cur < "$TUI_DIR/run.cur"
+  [ "$RUN_MODE" = park ] && verb="parking" || verb="resuming"
+  PC=()
+  local n=0
+  for ((i = 0; i < NP; i++)); do
+    tfit "${P_N[$i]}" 14; tpad "${K_B}$FIT${K_R}" 15; name=$PAD
+    if [ -f "$TUI_DIR/run.$i" ]; then
+      done=$((done + 1))
+      local any=0
+      while IFS=$'\t' read -r lvl _ msg; do
+        any=1
+        case $lvl in ok) icon=$I_OK ;; err) icon=$I_ERR; errs=$((errs + 1)) ;; *) icon="${K_MUTED}·${K_R}"; msg="${K_MUTED}$msg${K_R}" ;; esac
+        PC[n]="$icon $name$msg"; n=$((n + 1)); name="               "
+      done < "$TUI_DIR/run.$i"
+      [ $any = 0 ] && { PC[n]="${K_MUTED}·${K_R} $name${K_MUTED}not on this Mac${K_R}"; n=$((n + 1)); }
+    elif [ "$i" = "$cur" ]; then spinner; PC[n]="$REPLY $name${K_MUTED}${verb}…${K_R}"; n=$((n + 1))
+    else PC[n]="${K_LINE}○${K_R} $name"; n=$((n + 1)); fi
+  done
+  PC[n]=""; n=$((n + 1))
+  if [ -f "$TUI_DIR/run.done" ]; then
+    if [ $errs -eq 0 ] && [ "$RUN_MODE" = park ]; then PC[n]="$I_OK ${K_B}All parked.${K_R} On your next Mac: ${K_ACC}roam resume${K_R}"
+    elif [ $errs -eq 0 ]; then PC[n]="$I_OK ${K_B}Ready.${K_R} Open Xcode and Claude Code now."
+    else PC[n]="$I_ERR $errs problem$([ $errs = 1 ] || echo s) — see above"; fi
+  elif [ ! -f "$TUI_DIR/run.locked" ] && ! kill -0 "$RUN_PID" 2>/dev/null; then
+    PC[n]="${K_WARN}•${K_R} roam is busy (a background run?) — try again in a moment"
+  fi
+  pct=$(( NP > 0 ? done * 100 / NP : 100 ))
+  # progress in the tab or dock where the terminal shows it (OSC 9;4: Ghostty, iTerm2, Windows Terminal)
+  if [ -f "$TUI_DIR/run.done" ]; then printf '\033]9;4;0\033\\' >/dev/tty; else printf '\033]9;4;1;%d\033\\' "$pct" >/dev/tty; fi
+  thl $(( (COLS - 30) * pct / 100 )) "━"; local bar="${K_ACC}$HL${K_R}"; thl $(( (COLS - 30) - (COLS - 30) * pct / 100 )) "─"
+  panel $COLS $((ROWS - 2)) "$([ "$RUN_MODE" = park ] && echo Park || echo Resume)" 1 "$done of $NP · $((SECONDS - RUN_T0)) s"
+  for ((i = 0; i < ROWS - 2; i++)); do S[$((i + 1))]=${PB[$i]}; done
+  S[$((ROWS - 3))]="${K_ACC}│${K_R} $bar${K_LINE}$HL${K_R} ${K_MUTED}$pct%${K_R}"; tpad "${S[$((ROWS - 3))]}" $((COLS - 1)); S[$((ROWS - 3))]="$PAD${K_ACC}│${K_R}"
+  topbar "${K_LINE}›${K_R} ${K_B}$([ "$RUN_MODE" = park ] && echo park || echo resume)${K_R}" ""
+  if [ -f "$TUI_DIR/run.done" ] || { [ ! -f "$TUI_DIR/run.locked" ] && ! kill -0 "$RUN_PID" 2>/dev/null; }; then
+    statusbar "DONE" "⏎:back"
+  else statusbar "$(echo "$RUN_MODE" | tr a-z A-Z)" "" "${K_MUTED}$verb — the app stays open${K_R}"; fi
+}
+
+run_key() {
+  if [ -f "$TUI_DIR/run.done" ] || { [ ! -f "$TUI_DIR/run.locked" ] && ! kill -0 "$RUN_PID" 2>/dev/null; }; then
+    case $1 in MOUSE|TICK) ;; Q) QUIT=1 ;; *) VIEW=$RUN_BACK; tui_refresh ;; esac
+  fi
 }
 
 # ---------------------------------------------------------------- overlays
@@ -671,6 +826,7 @@ HELP="Everywhere
 Lists
   ↑↓ j k   move                      ⏎        open
   ⇥ / 1-3  switch tab                g / G    first / last
+  /        filter projects           mouse    wheel scrolls, click selects
 Dashboard
   r        resume all projects       p        park all projects
   s        AI sessions               v        docs
@@ -712,7 +868,7 @@ tui_outside() {  # $1 title (empty: none), $2 shell code, $3 "nopause"
 tui_frame() {
   NOW=$(date +%s)
   S=()
-  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; reader) reader_draw ;; esac
+  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; reader) reader_draw ;; run) run_draw ;; esac
   toast_draw
   [ "$HELP_ON" = 1 ] && help_draw
   local i
@@ -721,6 +877,7 @@ tui_frame() {
 }
 
 tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|help: one frame on stdout, no terminal needed (tests, docs)
+  FILTER="${ROAM_TUI_FILTER:-}" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0
   TUI_DIR=$(mktemp -d -t roam-tui); SEL=0 BUSY="" TICKS=0 HELP_ON=0 TOAST_T=0 PROMPT="" PV_KEY="" FULL=1 PREV=() FB=""
   tui_palette; tui_size
   tui_load
@@ -753,6 +910,7 @@ tui_main() {
   local i
   export LC_ALL=${LC_ALL:-${LC_CTYPE:-en_US.UTF-8}}   # ${#s} counts characters only in a UTF-8 locale
   TUI_DIR=$(mktemp -d -t roam-tui)
+  FILTER="" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0 MOUSE_B=0 MOUSE_X=0 MOUSE_Y=0 MOUSE_UP=0
   SEL=0 VIEW=dash BUSY="" TICKS=0 HELP_ON=0 QUIT=0 TOAST="" TOAST_T=0 PROMPT="" PROMPT_TEXT="" PV_KEY="" FB="" RESIZED=0 DIRTY=1
   tui_palette; tui_size
   trap 'tui_leave; [ -n "${TUI_JOBS:-}" ] && kill $TUI_JOBS 2>/dev/null; rm -rf "$TUI_DIR"' EXIT
@@ -780,7 +938,7 @@ tui_main() {
     case $KEY in
       '?') HELP_ON=1; continue ;;
     esac
-    case $VIEW in dash) dash_key "$KEY" ;; proj) proj_key "$KEY" ;; reader) reader_key "$KEY" ;; esac
+    case $VIEW in dash) dash_key "$KEY" ;; proj) proj_key "$KEY" ;; reader) reader_key "$KEY" ;; run) run_key "$KEY" ;; esac
     [ "$VIEW" != "${LAST_VIEW:-}" ] && { FULL=1; LAST_VIEW=$VIEW; }
   done
 }

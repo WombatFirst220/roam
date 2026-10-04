@@ -18,7 +18,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.3.0
+ROAM_VERSION=1.3.1
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)

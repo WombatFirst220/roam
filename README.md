@@ -72,7 +72,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.3.0                                                                               14:02
+ ◆ roam  v1.3.1                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -91,7 +91,7 @@ Just type `roam`:
 │ ▸ Mac mini             this Mac     macOS 26.1   Xcode 26.1   ✓ ready                            │
 │ ● MacBook Pro          online       macOS 26.1   Xcode 26.1   ✗ 1 missing                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ROAM   ⏎ open  r resume  p park  s sessions  v docs  d doctor  ? help  q quit        ⠹ checking the remotes…
+ ROAM   ⏎ open  / filter  r resume  p park  s sessions  v docs  ? help  q quit    ⠹ checking the remotes…
 ```
 
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep. The app
@@ -100,8 +100,14 @@ opens at once with what the pool knows and asks the remotes in the background.
 - **⏎** opens a project: **Sessions** (where each AI session stopped, `⏎` reads it, `c` continues it),
   **Docs** (README, CLAUDE.md, … with a preview, `⏎` reads it, `o` opens your editor) and **Git**.
   `⇥` or `1`–`3` switch tabs, `esc` goes back.
-- **r** resume, **p** park, **d** doctor, **f** fix, **n** new, **a** add, **L** log, **u** refresh — park,
-  resume and friends run in the terminal as usual and bring you back afterwards. **?** shows every key.
+- **r** resume and **p** park right in the app: one row per project, a spinner while it runs, ✓ or ✗ with
+  the details when it's done — and a progress bar, in the tab too where the terminal shows one (Ghostty,
+  iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
+  **L** log, **u** refresh, **?** shows every key.
+- **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
+- The mouse works too: the wheel scrolls, a click selects, a click on the selected project opens it, a click
+  on a tab switches to it. To select text, hold ⌥ or ⇧ while dragging (which one depends on the terminal),
+  or turn the mouse off with `ROAM_MOUSE=0`.
 - The reader scrolls with `j`/`k`, `space`/`b`, `g`/`G`; `/` searches, `n`/`N` jump, `]`/`[` go to the
   next or previous heading — or the next prompt in a session.
 - Truecolor in iTerm2, Ghostty, WezTerm, VS Code and Terminal on macOS 26 and later, 256 colors elsewhere
