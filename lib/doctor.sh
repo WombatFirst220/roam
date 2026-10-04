@@ -70,6 +70,7 @@ check_mac() {
   if have claude; then
     v=$(claude --version 2>/dev/null | awk '{print $1}'); res ok "This Mac" "Claude Code $v"
   else res hint "This Mac" "Claude Code" "" "https://claude.com/claude-code"; fi
+  have jq && res ok "This Mac" "jq (AI session details)" || res hint "This Mac" "jq — roam sessions shows only titles without it" "brew install jq"
 }
 
 check_xcode() {  # once per run, if any project uses Xcode

@@ -94,6 +94,45 @@ Just type `roam`:
 
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep.
 
+## Where did the AI leave off?
+
+Claude Code on the Mac mini, Codex on the MacBook — and on the next Mac you want to know where each
+session stopped. `roam sessions` shows the AI sessions of every project, from every Mac:
+
+```console
+$ roam sessions MyApp
+  1  ✻ Fix the login                 MacBook Pro · 2 min ago · feature/login · 12 prompts · ● running
+  2  ◇ Add dark mode                 this Mac · 1 h ago · main
+  3  ✻ App Store review checklist    Mac mini · 3 days ago · main · 8 prompts
+
+  ✻ Fix the login                    MacBook Pro · 2 min ago · feature/login · 12 prompts · ● running
+    recap   Login works again, README still open.
+    you     also cover the expired token case
+    ✻ ai    Done — expired tokens now send you back to the login screen …
+    todos
+            ✓ Write the test
+            ◐ Update README
+    files   Sources/Auth/Login.swift · Tests/LoginTests.swift
+```
+
+| | |
+|---|---|
+| `roam sessions` | inside a project: its sessions; elsewhere: the newest session of every project |
+| `roam session MyApp 2` | read session 2 — prompts, replies, one line per tool call — in a scrollable reader |
+| `roam continue MyApp` | `claude --resume` / `codex resume` that session, in the project folder |
+| `roam read MyApp` | README, CLAUDE.md, AGENTS.md, TODO, CHANGELOG, docs … rendered in the same reader |
+
+The dashboard shows each project's newest session too, and its menu has **Sessions** and **View**.
+
+- **This Mac** is read live from Claude Code (`~/.claude/projects`) and Codex (its own database,
+  read-only) — only the end of a transcript, so even 200 MB sessions open instantly.
+- **Other Macs** leave a digest per project in the pool (`sessions/<Mac>/<project>.txt`, at most 8 KB):
+  title, branch, todos, changed files and — with `session_digest = 2`, the default — the last prompt,
+  reply and recap, with API keys, tokens and passwords masked. `session_digest = 1` leaves out the
+  texts, `0` shares nothing.
+- Details and transcripts use `jq`, which macOS 15 and later ship. On older macOS: `brew install jq`.
+- The reader: `j`/`k` or arrows, `space`/`b` page, `g`/`G` start/end, `/` search, `n`/`N` next/previous, `q` back.
+
 ## Commands
 
 | Command | When |
@@ -105,6 +144,10 @@ Every Mac reports its state to the pool, so you see your other Macs even while t
 | `roam fix` | fixes what doctor found, asking before every step |
 | `roam new [name]` | starts a project: folder, `.gitignore`, GitHub repo, pool — in one go |
 | `roam add <git-url>` | adds an existing repo; every Mac gets it on its next `roam resume` |
+| `roam sessions [project]` | AI sessions on every Mac and where they stopped |
+| `roam session <project> [n]` | read a session |
+| `roam continue <project> [n]` | pick a session up again in Claude Code or Codex |
+| `roam read [project] [file]` | the project's Markdown files in the reader |
 | `roam status` | the dashboard without the menu |
 | `roam setup` | set up or repair this Mac |
 | `roam leave` | take this Mac out of the pool |
@@ -151,7 +194,7 @@ Without any configuration, by looking at your projects:
 
 | Found in a project | Checked |
 |---|---|
-| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, Claude Code sessions the sync app left empty |
+| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions the sync app left empty |
 | `*.xcodeproj` | full Xcode, first-launch setup, iOS Simulator, iOS SDK ≥ highest `IPHONEOS_DEPLOYMENT_TARGET`, a signing certificate for every `DEVELOPMENT_TEAM` |
 | `package.json` | Node, installed packages (`npm ci` / `pnpm` / `yarn` by lockfile) |
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |
@@ -178,7 +221,7 @@ Website      Website      git@github.com:you/website.git        needs=hugo
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)
 
 **`settings`** — `claude_sync`, `claude_history` (0 = memory only, no transcripts),
-`interval_min`, `max_file_mb`.
+`session_digest` (0/1/2, see above), `interval_min`, `max_file_mb`.
 
 Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
 
@@ -191,6 +234,8 @@ Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
   `claude --resume`.
 - Session transcripts contain everything a session saw. Don't want them in your sync folder?
   `claude_history = 0`.
+- The session digests are written on every park, resume and background run — but only rewritten
+  when a session changed.
 - Plain bash, git and rsync — what macOS ships. Nothing to compile, nothing running but a
   LaunchAgent every few minutes.
 

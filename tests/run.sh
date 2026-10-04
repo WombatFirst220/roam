@@ -39,6 +39,7 @@ claude_dir() { echo "$T/$1/.claude/projects/$(printf '%s' "$T/$1/dev/App" | sed 
 CUR=""
 ok()   { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$G" "$N" "$CUR"; }
 fail() { FAIL=$((FAIL + 1)); printf '  %s✗%s %s — %s\n' "$R" "$N" "$CUR" "$1"; [ -n "${OUT:-}" ] && printf '%s\n' "$OUT" | sed "s/^/      $D/; s/\$/$N/"; }
+not() { ! "$@"; }
 check() {  # $1 description of what failed, rest: test command
   local why=$1; shift
   if "$@"; then return 0; fi
@@ -116,6 +117,98 @@ t_scripts_are_bash32_clean() {
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)
   check "bash 4 features: $hits" [ -z "$hits" ] || return 1
   for f in "$ROOT/roam" "$ROOT"/lib/*.sh; do /bin/bash -n "$f" || { fail "syntax error in $f"; return 1; }; done
+}
+
+# ---------------------------------------------------------------- AI sessions
+claude_fixture() {  # $1 Mac, $2 session id — a small transcript with a title, a prompt (and a fake key), a reply, todos, an edit
+  local d p
+  d=$(claude_dir "$1"); p="$T/$1/dev/App"
+  mkdir -p "$d"
+  cat > "$d/$2.jsonl" <<EOF
+{"parentUuid":null,"isSidechain":false,"promptId":"p1","type":"user","message":{"role":"user","content":"fix the login, key sk-ant-api03-abcdefghijklmnop"},"timestamp":"2026-10-01T10:00:00.000Z","cwd":"$p","gitBranch":"feature/login","sessionId":"$2"}
+{"parentUuid":"u1","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"$p/a.txt","old_string":"a","new_string":"b"}}]},"timestamp":"2026-10-01T10:00:05.000Z","gitBranch":"feature/login","sessionId":"$2"}
+{"parentUuid":"u2","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"TodoWrite","input":{"todos":[{"content":"Write the test","status":"completed","activeForm":"x"},{"content":"Update README","status":"in_progress","activeForm":"y"}]}}]},"timestamp":"2026-10-01T10:00:06.000Z","gitBranch":"feature/login","sessionId":"$2"}
+{"parentUuid":"u3","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The login works again."}]},"timestamp":"2026-10-01T10:00:09.000Z","gitBranch":"feature/login","sessionId":"$2"}
+{"type":"system","subtype":"away_summary","content":"Login fixed, README still open.","timestamp":"2026-10-01T10:01:00.000Z","sessionId":"$2"}
+{"type":"ai-title","aiTitle":"Fix the login","sessionId":"$2"}
+EOF
+}
+
+t_sessions_show_title_and_last_state() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  claude_fixture A s-one
+  on A sessions App
+  case $OUT in *"Fix the login"*) ;; *) fail "title missing"; return 1 ;; esac
+  case $OUT in *"README still open"*) ;; *) fail "recap missing"; return 1 ;; esac
+  case $OUT in *"Update README"*) ;; *) fail "todo missing"; return 1 ;; esac
+  case $OUT in *"a.txt"*) ;; *) fail "edited file missing"; return 1 ;; esac
+}
+
+t_digest_tells_the_other_mac_with_secrets_masked() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  claude_fixture A s-two
+  on A park
+  check "no digest written" [ -f "$T/pool/sessions/A/App.txt" ] || return 1
+  check "secret reached the pool" not grep -q 'abcdefghijklmnop' "$T/pool/sessions/A/App.txt" || return 1
+  check "prompt missing in digest" grep -q '^prompt=s-two' "$T/pool/sessions/A/App.txt" || return 1
+  on B sessions App
+  case $OUT in *"Fix the login"*) ;; *) fail "B doesn't see A's session"; return 1 ;; esac
+  case $OUT in *"this Mac"*) fail "A's session credited to B"; return 1 ;; esac
+}
+
+t_digest_level_0_shares_nothing() {
+  claude_fixture A s-three
+  printf 'session_digest = 0\n' >> "$T/pool/settings"
+  on A park
+  check "digest written despite session_digest = 0" [ ! -f "$T/pool/sessions/A/App.txt" ]
+}
+
+t_codex_sessions_come_from_codex_database() {
+  command -v jq >/dev/null && command -v sqlite3 >/dev/null || { fail "jq or sqlite3 missing"; return 1; }
+  local r="$T/A/.codex/sessions/2026/10/01/rollout-x.jsonl"
+  mkdir -p "$(dirname "$r")"
+  cat > "$r" <<EOF
+{"timestamp":"2026-10-01T09:00:00.000Z","type":"session_meta","payload":{"id":"c-1","cwd":"$T/A/dev/App"}}
+{"timestamp":"2026-10-01T09:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"add dark mode"}}
+{"timestamp":"2026-10-01T09:00:09.000Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"Dark mode is in."}}
+EOF
+  sqlite3 "$T/A/.codex/state_5.sqlite" "create table threads (id text, rollout_path text, created_at int, updated_at int, cwd text, title text, name text,
+    first_user_message text, git_branch text, source text, agent_role text, archived int);
+    insert into threads values ('c-1', '$r', 1790000000, 1790000100, '$T/A/dev/App', 'Dark mode', '', 'add dark mode', 'main', 'cli', null, 0);"
+  on A sessions App
+  case $OUT in *"Dark mode is in."*) ;; *) fail "Codex reply missing"; return 1 ;; esac
+}
+
+t_session_transcript_reads_as_markdown() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  claude_fixture A s-four
+  on A session App 1
+  case $OUT in *"#### ▌ you"*"#### ▌ claude"*"The login works again."*) ;; *) fail "transcript not rendered as Markdown"; return 1 ;; esac
+}
+
+# ---------------------------------------------------------------- Markdown reader
+t_markdown_never_wider_than_asked() {
+  local w line bad=0
+  for w in 50 80; do
+    while IFS= read -r line; do [ ${#line} -le $w ] || { bad=1; OUT="$w: $line"; }; done <<EOF
+$(LC_ALL=en_US.UTF-8 /bin/bash -c ". '$ROOT/lib/md.sh'; md_render '$ROOT/README.md' $w")
+EOF
+  done
+  check "a rendered line is too wide" [ $bad = 0 ]
+}
+
+t_markdown_strips_escape_sequences() {
+  printf '# Title\n\nevil \033]0;pwned\007 text \033[31mred\n' > "$T/evil.md"
+  OUT=$(/bin/bash -c ". '$ROOT/lib/md.sh'; md_render '$T/evil.md' 60")
+  case $OUT in *$'\033'*) fail "escape sequence got through"; return 1 ;; esac
+}
+
+t_markdown_files_ranked_readme_first() {
+  local p="$T/A/dev/App"
+  echo "# r" > "$p/README.md"; echo "# c" > "$p/CLAUDE.md"; echo "# ch" > "$p/CHANGELOG.md"
+  mkdir -p "$p/docs"; echo "# d" > "$p/docs/guide.md"; ln -s CLAUDE.md "$p/AGENTS.md"
+  OUT=$(/bin/bash -c ". '$ROOT/lib/md.sh'; md_files '$p'" | cut -f3 | tr '\n' ' ')
+  check "wrong order or duplicate: $OUT" [ "$OUT" = "README.md CLAUDE.md CHANGELOG.md docs/guide.md " ]
 }
 
 # ---------------------------------------------------------------- run

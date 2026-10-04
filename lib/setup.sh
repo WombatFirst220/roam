@@ -30,6 +30,9 @@ claude_history = ${3:-1}
 interval_min = ${4:-10}
 # new files above this size block parking a project (MB)
 max_file_mb = 50
+# what each Mac tells the others about its AI sessions (Claude Code, Codex), for roam sessions:
+# 0 nothing · 1 titles, todos, changed files · 2 also the last prompt, reply and recap (secrets masked)
+session_digest = 2
 EOF
 }
 
@@ -322,6 +325,7 @@ EOF
   confirm "Remove $(short_name "$(scutil --get ComputerName)") from the pool? Projects and files stay where they are." n || return 0
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
   rm -f "$AGENT_PLIST" "$MACS_DIR/$MAC.txt" "$CONFIG"
+  rm -rf "$POOL/sessions/$MAC"
   [ -L "$HOME/.local/bin/roam" ] && rm -f "$HOME/.local/bin/roam"
   say_ok "done. Rejoin any time: roam setup"
 }

@@ -70,6 +70,10 @@ adopt_identity() {  # take over registry entries and snapshots this Mac left und
   done
   [ "$MAC_LOCAL" != "$MAC" ] && case " $olds " in *" $MAC_LOCAL "*) ;; *) olds="$olds $MAC_LOCAL" ;; esac
   [ -n "$olds" ] || return 0
+  for old in $olds; do
+    [ -d "$POOL/sessions/$old" ] || continue
+    if [ -d "$POOL/sessions/$MAC" ]; then rm -rf "$POOL/sessions/$old"; else mv "$POOL/sessions/$old" "$POOL/sessions/$MAC"; fi
+  done
   while read -r name dir remote extra; do
     [ -d "$PROJECTS_DIR/$dir/.git" ] || continue
     ( cd "$PROJECTS_DIR/$dir" && fetch_all
@@ -122,6 +126,8 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
     park|auto) park_project "$name"; [ "$CLAUDE_SYNC" = 1 ] && claude_sync "$name" "$path" up ;;
     resume)    resume_project "$name"; [ "$CLAUDE_SYNC" = 1 ] && claude_sync "$name" "$path" down ;;
   esac
+  # where this Mac's AI sessions stopped, for the other Macs — never worth failing a run over
+  sess_digest_write "$name" "$path" 2>/dev/null || log "$name: session digest failed"
   return 0
 }
 
@@ -272,11 +278,26 @@ $(projects)
 EOF
   [ $n -eq 0 ] && box_line "${C_MUTED}nothing — everything is committed and pushed${C_RESET}"
   box_bottom
+
+  box_top "AI sessions" "newest per project"
+  n=0
+  while read -r name dir remote extra; do
+    [ -n "$name" ] || continue
+    line=$(sess_rows "$name" "$PROJECTS_DIR/$dir" | head -1)
+    [ -n "$line" ] || continue
+    n=$((n + 1))
+    box_line "$(pad "${C_BOLD}$(trunc "$name" 13)${C_RESET}" 14)$(sess_line "$line" "" $(( $(ui_width) - 6 - 14 - 2 - 28 )) short)"
+  done <<EOF
+$(projects)
+EOF
+  [ $n -eq 0 ] && box_line "${C_MUTED}no Claude Code or Codex sessions in these projects yet${C_RESET}"
+  [ $n -gt 0 ] && box_line "$(sess_icon claude) ${C_LINE}Claude Code ·${C_RESET} $(sess_icon codex) ${C_LINE}Codex · ● running — details: roam sessions <project>${C_RESET}"
+  box_bottom
   return 0
 }
 
 # ---------------------------------------------------------------- interactive
-ACTIONS="Resume Park New Doctor Fix Add Log Quit"
+ACTIONS="Resume Park Sessions View New Doctor Fix Add Log Quit"
 action_bar() {  # $1 selected index
   local i=0 a out=""
   for a in $ACTIONS; do
@@ -290,7 +311,8 @@ action_bar() {  # $1 selected index
 pause() { printf '\n  %spress any key%s' "$C_MUTED" "$C_RESET"; read_key >/dev/null; }
 
 interactive() {
-  local sel=0 k act quick="" r
+  local sel=0 k act quick="" r n
+  n=$(echo $ACTIONS | wc -w | tr -d ' ')
   trap 'tput cnorm 2>/dev/null; printf "\n"; exit 0' INT
   while :; do
     clear
@@ -301,10 +323,10 @@ interactive() {
     while :; do
       k=$(read_key)
       case $k in
-        LEFT|h)  sel=$(( (sel + 7) % 8 )); action_bar $sel; continue ;;
-        RIGHT|l) sel=$(( (sel + 1) % 8 )); action_bar $sel; continue ;;
+        LEFT|h)  sel=$(( (sel + n - 1) % n )); action_bar $sel; continue ;;
+        RIGHT|l) sel=$(( (sel + 1) % n )); action_bar $sel; continue ;;
         ENTER)   act=$(echo $ACTIONS | cut -d' ' -f$((sel + 1))) ;;
-        r|R) act=Resume ;; p|P) act=Park ;; n|N) act=New ;; d|D) act=Doctor ;; f|F) act=Fix ;;
+        r|R) act=Resume ;; p|P) act=Park ;; s|S) act=Sessions ;; v|V) act=View ;; n|N) act=New ;; d|D) act=Doctor ;; f|F) act=Fix ;;
         a|A) act=Add ;; L) act=Log ;; q|Q|ESC) act=Quit ;; u|U) act=Refresh ;;
         *) continue ;;
       esac
@@ -320,6 +342,8 @@ interactive() {
               clear; header "doctor" "$(short_name "$(scutil --get ComputerName)")"; doctor_show; registry_write; pause; quick=quick ;;
       Fix)    ( doctor_run ) & spin_while $! "${C_MUTED}checking this Mac…${C_RESET}"
               fix_run; doctor_run; registry_write; pause; quick=quick ;;
+      Sessions) ( sessions_menu ); quick=quick ;;
+      View)   ( cd / && read_cmd "" ); quick=quick ;;   # from / the picker always asks which project
       New)    ( new_project ); pause ;;
       Add)    r=$(ask "Git remote of the project (e.g. git@github.com:you/app.git)" "")
               [ -n "$r" ] && add_project "$r" ""; pause ;;
