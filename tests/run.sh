@@ -4,6 +4,7 @@
 #   tests/run.sh resume     only tests whose name contains "resume"
 # Needs nothing but what roam needs. Never touches your real pool, projects or ~/.claude.
 set -u
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS   # the caller's git overrides (packaging/release.sh) stay out of the simulated Macs
 ROOT=$(cd "$(dirname "$0")/.." && pwd -P)
 ONLY=${1:-}
 PASS=0 FAIL=0 T=""
@@ -168,6 +169,24 @@ t_clone_falls_back_to_https_where_ssh_has_no_access() {
   check "not cloned over HTTPS" [ -d "$T/B/dev/App/.git" ] || return 1
   case $OUT in *"over HTTPS"*) ;; *) fail "no note that HTTPS was used"; return 1 ;; esac
   check "pool entry changed" grep -q 'git@github.com:me/app.git' "$T/pool/projects.conf"
+}
+
+t_park_falls_back_to_https_where_ssh_has_no_access() {
+  # the SSH key on this Mac belongs to another account: SSH fails, the same repo over HTTPS gets in
+  printf '[url "%s"]\n\tinsteadOf = https://github.com/me/app.git\n' "$T/remote.git" > "$T/A/.gitconfig"
+  git -C "$T/A/dev/App" remote set-url origin git@github.com:me/app.git
+  echo wip > "$T/A/dev/App/new.txt"
+  GIT_SSH_COMMAND=false on A park
+  check "not parked over HTTPS" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A >/dev/null
+}
+
+t_park_names_the_reason_a_push_failed() {
+  git -C "$T/A/dev/App" remote set-url origin git@github.com:me/app.git
+  printf '[url "%s"]\n\tinsteadOf = https://github.com/me/app.git\n' "$T/nowhere.git" > "$T/A/.gitconfig"
+  echo wip > "$T/A/dev/App/new.txt"
+  GIT_SSH_COMMAND=false on A park
+  case $OUT in *"push to the remote failed: "*) ;; *) fail "no push error"; return 1 ;; esac
+  case $OUT in *"offline?"*) fail "blames the network for a missing access"; return 1 ;; esac
 }
 
 t_clone_never_touches_an_existing_folder() {

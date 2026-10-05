@@ -252,7 +252,8 @@ Website      Website      git@github.com:you/website.git        needs=hugo
 Remotes are kept as SSH addresses — they work on every Mac with a key, without a stored password.
 `roam add` and `roam new` turn an `https://` GitHub, GitLab, Bitbucket or Codeberg address into SSH, and
 an older HTTPS entry is switched on the next run. Where SSH has no access (a Mac whose key belongs to
-another account), roam clones over HTTPS instead and says so.
+another account), roam clones, parks and resumes over HTTPS instead (signed in through `gh` on GitHub),
+and a failed push says why instead of blaming the network.
 
 - `local=a,b` — ignored files a project can't run without (missing → ✗)
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)

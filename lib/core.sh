@@ -26,9 +26,38 @@ in_the_middle() {  # merge, rebase, cherry-pick or bisect in progress
   [ -d "$g/rebase-merge" ] || [ -d "$g/rebase-apply" ] || [ -f "$g/MERGE_HEAD" ] || [ -f "$g/CHERRY_PICK_HEAD" ] || [ -f "$g/BISECT_LOG" ]
 }
 
+# The pool keeps SSH addresses, but on a Mac whose SSH key belongs to another account they get no access —
+# the same repo over HTTPS often does (gh login, keychain). So every talk with origin tries SSH, then HTTPS.
+origin_git() {  # $1 push|fetch, $2 options ("-q --force"), rest: refspecs → status; git's reason in ORIGIN_ERR
+  local cmd=$1 opts=$2 url https
+  shift 2
+  ORIGIN_ERR=$(git $cmd $opts origin "$@" 2>&1) && return 0
+  url=$(git remote get-url origin 2>/dev/null) https=$(https_remote "$url")
+  [ -n "$url" ] && [ "$https" != "$url" ] || return 1
+  case $https in
+    https://github.com/*) have gh && gh auth status >/dev/null 2>&1 &&
+      set -- -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$cmd" $opts "$https" "$@" ||
+      set -- "$cmd" $opts "$https" "$@" ;;
+    *) set -- "$cmd" $opts "$https" "$@" ;;
+  esac
+  ORIGIN_ERR=$(GIT_TERMINAL_PROMPT=0 git "$@" 2>&1)
+}
+
+origin_why() {  # ORIGIN_ERR → the reason in a few words
+  local e
+  e=$(printf '%s\n' "$ORIGIN_ERR" | sed 's/^fatal: //; s/^ERROR: //; s/^error: //' | grep -v -e '^$' -e '^Please make sure' -e '^and the repository' | head -1)
+  case $ORIGIN_ERR in
+    *"Could not resolve host"*|*"Network is unreachable"*|*"timed out"*|*"Failed to connect"*|*"Connection refused"*)
+      echo "offline?" ;;
+    *"could not read Username"*|*"terminal prompts disabled"*|*"Authentication failed"*|*"Permission denied"*|\
+    *"not found"*|*"Could not read from remote"*|*"403"*)
+      echo "no access from this Mac over SSH or HTTPS — add this Mac's SSH key (roam setup) or log in once: gh auth login" ;;
+    *) echo "${e:-unknown reason}" ;;
+  esac
+}
+
 fetch_all() {
-  git fetch -q --prune origin 2>/dev/null &&
-    git fetch -q --prune origin '+refs/roam/*:refs/remotes/roam/*' 2>/dev/null
+  origin_git fetch "-q --prune" '+refs/heads/*:refs/remotes/origin/*' '+refs/roam/*:refs/remotes/roam/*'
 }
 
 snap_branch() { git log -1 --format=%s "$1" | awk '{print $3}'; }
@@ -55,7 +84,7 @@ changes() {  # git diff --shortstat → "3 files +12 −4"
 
 drop_own_snapshot() {  # delete this Mac's ref locally and on the remote
   if git rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null; then
-    git push -q origin ":refs/roam/$MAC" 2>/dev/null || return 1
+    origin_git push -q ":refs/roam/$MAC" || return 1
     git update-ref -d "refs/remotes/roam/$MAC"
   fi
   git update-ref -d "refs/roam/$MAC" 2>/dev/null
@@ -75,7 +104,7 @@ park_project() {  # $1 name; cwd is the project
     rm -f "$g/roam-applied"
     if git rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null; then
       if drop_own_snapshot; then report ok "$name" "all pushed — old snapshot removed"
-      else report err "$name" "couldn't remove the old snapshot from the remote"; fi
+      else report err "$name" "couldn't remove the old snapshot from the remote: $(origin_why)"; fi
     else
       git update-ref -d "refs/roam/$MAC" 2>/dev/null
       report ok "$name" "nothing in flight"
@@ -118,11 +147,11 @@ EOF
     report ok "$name" "already parked · $branch · $(changes "$head" "$new")"
     return
   fi
-  if git push -q --force origin "refs/roam/$MAC:refs/roam/$MAC" 2>/dev/null; then
+  if origin_git push "-q --force" "refs/roam/$MAC:refs/roam/$MAC"; then
     git update-ref "refs/remotes/roam/$MAC" "$new"
     report ok "$name" "parked · $branch · $(changes "$head" "$new")"
   else
-    report err "$name" "push to the remote failed (offline?)"
+    report err "$name" "push to the remote failed: $(origin_why)"
   fi
 }
 
@@ -150,7 +179,7 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
     if [ "$head" != "$up" ] && git merge-base --is-ancestor "$head" "$up" &&
        committed_upstream "$(worktree_tree)" "$head" "$up"; then
       git reset -q --hard "$up" && git clean -q -fd && rm -f "$g/roam-applied"
-      drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
+      drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote: $(origin_why)"
       report ok "$name" "your changes were committed on another Mac — now at $(git rev-parse --abbrev-ref '@{u}')"
       return
     fi
@@ -199,7 +228,7 @@ resume_project() {  # $1 name
   # Identical already (e.g. the same file arrived on both Macs): just note it, nothing to change
   if [ "$(git rev-parse HEAD)" = "$(git rev-parse "$sha^")" ] && [ "$(worktree_tree)" = "$(git rev-parse "$sha^{tree}")" ]; then
     printf '%s\n' "$sha" > "$g/roam-applied"
-    drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
+    drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote: $(origin_why)"
     report ok "$name" "same as on $(mac_label "$from") already"
     return
   fi
@@ -241,7 +270,7 @@ resume_project() {  # $1 name
   git read-tree -u --reset "$sha" && git reset -q || { report err "$name" "couldn't restore the working directory"; return; }
   printf '%s\n' "$sha" > "$g/roam-applied"
   # Our own snapshot is now contained in the one we took over — leaving it would offer it again later
-  drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote"
+  drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote: $(origin_why)"
   report ok "$name" "resumed from $(mac_label "$from") · $(ago "$time") · $branch · $(changes HEAD "$sha")"
   # More than one other Mac with open work: only the newest was taken over
   foreign_snapshots | while read -r s _ m; do

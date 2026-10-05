@@ -92,11 +92,11 @@ EOF
       for old in $olds; do
         sha=$(git rev-parse -q --verify "refs/remotes/roam/$old") || sha=$(git rev-parse -q --verify "refs/roam/$old") || continue
         if ! git rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null &&
-           git push -q --force origin "$sha:refs/roam/$MAC" 2>/dev/null; then
+           origin_git push "-q --force" "$sha:refs/roam/$MAC"; then
           git update-ref "refs/remotes/roam/$MAC" "$sha"; git update-ref "refs/roam/$MAC" "$sha"
           log "$name: snapshot of $old now belongs to $MAC"
         fi
-        git rev-parse -q --verify "refs/remotes/roam/$old" >/dev/null && git push -q origin ":refs/roam/$old" 2>/dev/null
+        git rev-parse -q --verify "refs/remotes/roam/$old" >/dev/null && origin_git push -q ":refs/roam/$old"
         git update-ref -d "refs/remotes/roam/$old" 2>/dev/null; git update-ref -d "refs/roam/$old" 2>/dev/null
       done ) &
   done <<EOF
@@ -132,8 +132,8 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
   fi
   cd "$path" || return
   if ! fetch_all; then
-    if [ "$mode" = auto ]; then log "$name: remote unreachable"; return; fi   # being offline on the road is normal
-    report err "$name" "remote unreachable"
+    if [ "$mode" = auto ]; then log "$name: remote unreachable: $(origin_why)"; return; fi   # being offline on the road is normal
+    report err "$name" "remote unreachable: $(origin_why)"
   fi
   case $mode in
     park|auto) park_project "$name"; [ "$CLAUDE_SYNC" = 1 ] && claude_sync "$name" "$path" up ;;
