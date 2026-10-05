@@ -31,7 +31,8 @@ tui_palette() {  # truecolor where the terminal has it, else 256 colors; ROAM_CO
   _c K_OK 38 134 239 172 114;   _c K_WARN 38 252 211 77 221;  _c K_ERR 38 248 113 113 203
   _c K_MUTED 38 139 139 167 245; _c K_LINE 38 72 72 98 239;   _c K_DIM 38 90 90 115 240
   _c K_SEL 48 46 40 72 236;     _c K_BAR 48 30 30 42 235;     _c K_PILL 48 167 139 250 141
-  _c K_CLAUDE 38 217 119 87 173; _c K_CODEX 38 16 163 127 36
+  _c K_CLAUDE 38 217 119 87 173; _c K_CODEX 38 16 163 127 36; _c K_GEMINI 38 96 165 250 75
+  _c K_COPILOT 38 192 132 252 177; _c K_OPENCODE 38 200 200 210 250
   K_B=$'\033[1m' K_R=$'\033[0m' K_INK=$'\033[38;5;232m'
   # the rest of roam's helpers (cell, sess_line, md) pick these up too
   C_ACCENT=$K_ACC C_ACCENT2=$K_ACC2 C_CYAN=$K_CYAN C_OK=$K_OK C_WARN=$K_WARN C_ERR=$K_ERR C_MUTED=$K_MUTED C_LINE=$K_LINE
@@ -202,6 +203,13 @@ statusbar() {  # $1 mode, $2 key hints "k:label k:label …", $3 right side
   done
   tright "$out" "${3:-} " "$COLS"
   S[$((ROWS - 1))]="$K_BAR${PAD//$'\033[0m'/$'\033[0m'$K_BAR}"
+}
+
+tui_icon() {  # $1 tool → REPLY: its mark, without a subshell
+  case $1 in
+    claude) REPLY="${K_CLAUDE}✻${K_R}" ;; codex) REPLY="${K_CODEX}◇${K_R}" ;; gemini) REPLY="${K_GEMINI}✦${K_R}" ;;
+    copilot) REPLY="${K_COPILOT}◈${K_R}" ;; opencode) REPLY="${K_OPENCODE}▣${K_R}" ;; *) REPLY="◦" ;;
+  esac
 }
 
 tago() {  # $1 unix time → REPLY "5m", "3h", "2d" (NOW is set once per frame: no date per row)
@@ -401,7 +409,7 @@ dash_draw() {
       IFS=$'\t' read -r _m _s tool _i upd _b _n live _rest <<EOF
 ${LN[0]}
 EOF
-      case $tool in claude) icon="${K_CLAUDE}✻${K_R}" ;; codex) icon="${K_CODEX}◇${K_R}" ;; *) icon="◦" ;; esac
+      tui_icon "$tool"; icon=$REPLY
       tago "$upd"
       tright "$c" "$icon ${K_MUTED}$REPLY${K_R}$([ "$live" = 1 ] && echo " ${K_OK}●${K_R}" || :)" $((lw - 6))
       c=$PAD
@@ -661,7 +669,7 @@ reader_session() {  # $1 session row
   tool=$(printf '%s' "$1" | cut -f3); title=$(printf '%s' "$1" | cut -f9); file=$(printf '%s' "$1" | cut -f10)
   if [ ! -f "$file" ] || ! sess_jq; then toast "this transcript is on $(sess_where "$(printf '%s' "$1" | cut -f1)") — only where it stopped is here"; return; fi
   { printf '# %s\n\n*%s · %s · %s*\n' "$title" "$(sess_name "$tool")" "$(sess_where "$(printf '%s' "$1" | cut -f1)")" "${P_N[$PJ]}"
-    case $tool in claude) sess_claude_md "$file" ;; codex) sess_codex_md "$file" ;; esac
+    sess_md "$tool" "$file" "$(printf '%s' "$1" | cut -f4)"
   } > "$md" 2>/dev/null
   reader_open "$md" "${P_N[$PJ]} › $(sess_name "$tool") › $title"
   RSRC=""

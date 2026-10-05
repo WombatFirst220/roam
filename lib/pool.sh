@@ -331,7 +331,7 @@ EOF
 $(projects)
 EOF
   [ $n -eq 0 ] && box_line "${C_MUTED}no Claude Code or Codex sessions in these projects yet${C_RESET}"
-  [ $n -gt 0 ] && box_line "$(sess_icon claude) ${C_LINE}Claude Code ·${C_RESET} $(sess_icon codex) ${C_LINE}Codex · ● running — details: roam sessions <project>${C_RESET}"
+  [ $n -gt 0 ] && box_line "${C_LINE}$(sess_icon claude) Claude  $(sess_icon codex) Codex  $(sess_icon gemini) Gemini  $(sess_icon copilot) Copilot  $(sess_icon opencode) opencode  ${C_OK}●${C_LINE} running${C_RESET}"
   box_bottom
   return 0
 }

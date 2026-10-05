@@ -280,6 +280,173 @@ t_session_transcript_reads_as_markdown() {
   case $OUT in *"#### ▌ you"*"#### ▌ claude"*"The login works again."*) ;; *) fail "transcript not rendered as Markdown"; return 1 ;; esac
 }
 
+t_gemini_sessions() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  local d="$T/A/.gemini/tmp/app" p="$T/A/dev/App"
+  mkdir -p "$d/chats"; printf '%s' "$p" > "$d/.project_root"
+  cat > "$d/chats/session-2026-10-01T10-00-abc12345.jsonl" <<EOF
+{"sessionId":"g-1","projectHash":"x","startTime":"2026-10-01T10:00:00.000Z","lastUpdated":"2026-10-01T10:01:00.000Z","kind":"main"}
+{"id":"m1","timestamp":"2026-10-01T10:00:01.000Z","type":"user","content":[{"text":"add a search box"}]}
+{"id":"m2","timestamp":"2026-10-01T10:00:09.000Z","type":"gemini","content":"The search box is in.","toolCalls":[{"id":"t1","name":"write_file","args":{"file_path":"$p/search.txt"},"status":"success","timestamp":"2026-10-01T10:00:05.000Z"},{"id":"t2","name":"write_todos","args":{"todos":[{"description":"Style it","status":"in_progress"}]},"status":"success","timestamp":"2026-10-01T10:00:06.000Z"}]}
+{"\$set":{"summary":"Search box","lastUpdated":"2026-10-01T10:01:00.000Z"}}
+EOF
+  on A sessions App
+  for want in "Search box" "add a search box" "The search box is in." "Style it" "search.txt"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  on A session App g-1
+  case $OUT in *"#### ▌ you"*"add a search box"*"#### ▌ gemini"*"write_file"*) ;; *) fail "transcript"; return 1 ;; esac
+}
+
+t_gemini_replays_rewrites_and_rewinds() {
+  # Gemini writes a message again in full on every change, and /rewind drops what came after
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  local d="$T/A/.gemini/tmp/app" p="$T/A/dev/App" n
+  mkdir -p "$d/chats"; printf '%s' "$p" > "$d/.project_root"
+  cat > "$d/chats/session-2026-10-02T10-00-def67890.jsonl" <<EOF
+{"sessionId":"g-2","projectHash":"x","startTime":"2026-10-02T10:00:00.000Z","lastUpdated":"2026-10-02T10:00:00.000Z","kind":"main"}
+{"id":"u1","timestamp":"2026-10-02T10:00:01.000Z","type":"user","content":"make the header sticky"}
+{"\$set":{"lastUpdated":"2026-10-02T10:00:01.000Z"}}
+{"id":"g1","timestamp":"2026-10-02T10:00:02.000Z","type":"gemini","content":"Working on it."}
+{"id":"g1","timestamp":"2026-10-02T10:00:02.000Z","type":"gemini","content":"Working on it.","toolCalls":[{"id":"t1","name":"replace","args":{"file_path":"$p/header.css"},"status":"success","timestamp":"2026-10-02T10:00:03.000Z"},{"id":"t2","name":"write_todos","args":{"todos":[{"description":"Test on mobile","status":"pending"}]},"status":"success","timestamp":"2026-10-02T10:00:04.000Z"}]}
+{"id":"i1","timestamp":"2026-10-02T10:00:05.000Z","type":"info","content":"Request cancelled."}
+{"id":"u2","timestamp":"2026-10-02T10:00:06.000Z","type":"user","content":"also make it blue"}
+{"id":"g2","timestamp":"2026-10-02T10:00:07.000Z","type":"gemini","content":"It is blue now."}
+{"\$rewindTo":"u2"}
+EOF
+  cp "$d/chats/session-2026-10-02T10-00-def67890.jsonl" "$d/chats/session-2026-10-02T10-00-def67890.json"
+  on A sessions App
+  for want in "make the header sticky" "Working on it." "Test on mobile" "header.css" "1 prompt"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  for bad in "also make it blue" "It is blue now." "Request cancelled." "write_todos"; do
+    case $OUT in *"$bad"*) fail "shown: $bad"; return 1 ;; esac
+  done
+  n=$(printf '%s\n' "$OUT" | grep -c -E "^ +[0-9]+ +. make the header sticky")
+  check "the .json beside its .jsonl listed too" [ "$n" = 1 ] || return 1
+  on A session App g-2
+  n=$(printf '%s\n' "$OUT" | grep -c "Working on it.")
+  check "a rewritten message shown twice" [ "$n" = 1 ] || return 1
+  case $OUT in *"Edit"*|*"replace"*) ;; *) fail "tool call of the rewritten message missing"; return 1 ;; esac
+}
+
+t_gemini_legacy_json_sessions() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  local p="$T/A/dev/App" d
+  d="$T/A/.gemini/tmp/$(printf '%s' "$p" | shasum -a 256 | cut -c1-64)"
+  mkdir -p "$d/chats"
+  cat > "$d/chats/session-2026-09-01T10-00-old.json" <<EOF
+{"sessionId":"g-old","projectHash":"x","startTime":"2026-09-01T10:00:00.000Z","lastUpdated":"2026-09-01T10:05:00.000Z",
+ "messages":[{"id":"a","timestamp":"2026-09-01T10:00:01.000Z","type":"user","content":"rename the app"},
+             {"id":"b","timestamp":"2026-09-01T10:00:09.000Z","type":"gemini","content":[{"text":"Renamed everywhere."}]}]}
+EOF
+  on A sessions App
+  for want in "rename the app" "Renamed everywhere."; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+}
+
+t_copilot_sessions() {
+  command -v jq >/dev/null || { fail "jq missing"; return 1; }
+  local d="$T/A/.copilot/session-state/c-1" p="$T/A/dev/App"
+  mkdir -p "$d"
+  printf 'id: c-1\ncwd: %s\nbranch: main\nsummary: |\n  Fix the footer\ncreated_at: 2026-10-01T09:00:00Z\nupdated_at: 2026-10-01T09:05:00Z\n' "$p" > "$d/workspace.yaml"
+  cat > "$d/events.jsonl" <<EOF
+{"type":"session.start","id":"e0","timestamp":"2026-10-01T09:00:00.000Z","data":{"sessionId":"c-1"}}
+{"type":"user.message","id":"e1","timestamp":"2026-10-01T09:00:01.000Z","data":{"content":"fix the footer"}}
+{"type":"tool.execution_start","id":"e2","parentId":"e1","timestamp":"2026-10-01T09:00:02.000Z","data":{"toolName":"edit","arguments":{"path":"$p/footer.txt"}}}
+{"type":"assistant.message","id":"e3","timestamp":"2026-10-01T09:00:05.000Z","data":{"content":"Footer fixed.","toolRequests":[]}}
+EOF
+  printf -- '- [x] Find the footer\n- [ ] Test it\n' > "$d/plan.md"
+  on A sessions App
+  for want in "Fix the footer" "fix the footer" "Footer fixed." "Test it" "footer.txt"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  on A session App c-1
+  case $OUT in *"#### ▌ you"*"fix the footer"*"#### ▌ copilot"*"edit"*"Footer fixed."*) ;; *) fail "transcript"; return 1 ;; esac
+}
+
+t_copilot_current_format() {
+  # Copilot 1.x: title in name, todos in session.db, apply_patch edits, sub-agents in the same events.jsonl
+  command -v jq >/dev/null && command -v sqlite3 >/dev/null || { fail "jq or sqlite3 missing"; return 1; }
+  local d="$T/A/.copilot/session-state/c-2" p="$T/A/dev/App"
+  mkdir -p "$d"
+  printf 'id: c-2\ncwd: "%s"\nbranch: feature/menu\nsummary: an older summary\nname: "Burger menu"\n' "$p" > "$d/workspace.yaml"
+  cat > "$d/events.jsonl" <<EOF
+{"id":"e0","timestamp":"2026-10-02T09:00:00.000Z","parentId":null,"type":"session.start","data":{"sessionId":"c-2"}}
+{"id":"e1","timestamp":"2026-10-02T09:00:01.000Z","parentId":"e0","type":"user.message","data":{"content":"add a burger menu"}}
+{"id":"e2","timestamp":"2026-10-02T09:00:02.000Z","parentId":"e1","agentId":"sub-1","type":"user.message","data":{"content":"explore the nav code","parentToolCallId":"t0"}}
+{"id":"e3","timestamp":"2026-10-02T09:00:03.000Z","parentId":"e2","agentId":"sub-1","type":"assistant.message","data":{"messageId":"m1","content":"sub-agent findings"}}
+{"id":"e4","timestamp":"2026-10-02T09:00:04.000Z","parentId":"e3","type":"tool.execution_start","data":{"toolCallId":"t1","toolName":"apply_patch","arguments":"*** Begin Patch\n*** Update File: $p/nav.txt\n@@\n-old\n+new\n*** End Patch"}}
+{"id":"e5","timestamp":"2026-10-02T09:00:05.000Z","parentId":"e4","type":"assistant.message","data":{"messageId":"m2","content":"The menu folds up on phones."}}
+EOF
+  sqlite3 "$d/session.db" "create table todos (id text primary key, title text not null, description text, status text default 'pending', created_at text, updated_at text);
+    insert into todos values ('a', 'Animate the menu', null, 'in_progress', '1', '1'); insert into todos values ('b', 'Find the nav', null, 'done', '0', '0');"
+  on A sessions App
+  for want in "Burger menu" "feature/menu" "add a burger menu" "The menu folds up on phones." "Animate the menu" "nav.txt" "1 prompt"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  for bad in "an older summary" "explore the nav code" "sub-agent findings"; do
+    case $OUT in *"$bad"*) fail "shown: $bad"; return 1 ;; esac
+  done
+  on A session App c-2
+  case $OUT in *"add a burger menu"*"apply_patch"*"nav.txt"*"folds up"*) ;; *) fail "transcript"; return 1 ;; esac
+  case $OUT in *"sub-agent findings"*) fail "sub-agent reply in the transcript"; return 1 ;; esac
+}
+
+t_opencode_sessions() {
+  command -v jq >/dev/null && command -v sqlite3 >/dev/null || { fail "jq or sqlite3 missing"; return 1; }
+  local db="$T/A/.local/share/opencode/opencode.db" p="$T/A/dev/App"
+  mkdir -p "$(dirname "$db")"
+  sqlite3 "$db" "create table session (id text, directory text, title text, parent_id text, time_created int, time_updated int, time_archived int);
+    create table message (id text, session_id text, time_created int, time_updated int, data text);
+    create table part (id text, message_id text, session_id text, time_created int, time_updated int, data text);
+    create table todo (session_id text, content text, status text, priority text, position int, time_created int, time_updated int);
+    insert into session values ('o-1', '$p', 'Dark mode toggle', null, 1790000000000, 1790000100000, null);
+    insert into session values ('o-sub', '$p', 'a subagent', 'o-1', 1790000000000, 1790000200000, null);
+    insert into message values ('m1', 'o-1', 1790000001000, 1790000001000, '{\"role\":\"user\"}');
+    insert into message values ('m2', 'o-1', 1790000005000, 1790000005000, '{\"role\":\"assistant\"}');
+    insert into part values ('p1', 'm1', 'o-1', 1790000001000, 1790000001000, '{\"type\":\"text\",\"text\":\"add a dark mode toggle\"}');
+    insert into part values ('p2', 'm2', 'o-1', 1790000003000, 1790000003000, '{\"type\":\"tool\",\"tool\":\"edit\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"$p/theme.txt\"}}}');
+    insert into part values ('p3', 'm2', 'o-1', 1790000005000, 1790000005000, '{\"type\":\"text\",\"text\":\"The toggle is in the settings.\"}');
+    insert into todo values ('o-1', 'Remember the choice', 'pending', 'medium', 0, 1790000005000, 1790000005000);"
+  on A sessions App
+  for want in "Dark mode toggle" "add a dark mode toggle" "The toggle is in the settings." "Remember the choice" "theme.txt"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  case $OUT in *"a subagent"*) fail "subagent session listed"; return 1 ;; esac
+  on A session App o-1
+  case $OUT in *"#### ▌ you"*"dark mode"*"#### ▌ opencode"*"edit"*"settings."*) ;; *) fail "transcript"; return 1 ;; esac
+}
+
+t_opencode_2_sessions() {
+  # opencode 2.x: session_v2 + session_message; an upgraded database still has the 1.x tables (never counted twice)
+  command -v jq >/dev/null && command -v sqlite3 >/dev/null || { fail "jq or sqlite3 missing"; return 1; }
+  local db="$T/A/.local/share/opencode/opencode.db" p="$T/A/dev/App" n
+  mkdir -p "$(dirname "$db")"
+  sqlite3 "$db" "create table session (id text, directory text, title text, parent_id text, time_created int, time_updated int, time_archived int);
+    insert into session values ('o-1', '$p', 'Dark mode toggle', null, 1790000000000, 1790000100000, null);
+    create table session_v2 (id text, project_id text, parent_id text, directory text, path text, title text, time_created int, time_updated int, time_archived int);
+    create table session_message (id text, session_id text, type text, seq int, time_created int, time_updated int, data text);
+    insert into session_v2 values ('o-1', 'pr', null, '$p', '', 'Dark mode toggle', 1790000000000, 1790000100000, null);
+    insert into session_v2 values ('o-2', 'pr', null, '$p/web', 'web', null, 1790000000000, 1790000050000, null);
+    insert into session_v2 values ('o-sub', 'pr', 'o-1', '$p', '', 'a subagent', 1790000000000, 1790000200000, null);
+    insert into session_message values ('m1', 'o-1', 'user', 1, 1790000001000, 1790000001000, '{\"time\":{\"created\":1790000001000},\"text\":\"add a dark mode toggle\",\"files\":[]}');
+    insert into session_message values ('m2', 'o-1', 'assistant', 2, 1790000003000, 1790000005000, '{\"time\":{\"created\":1790000003000},\"agent\":\"build\",\"content\":[{\"type\":\"reasoning\",\"text\":\"secret thoughts\"},{\"type\":\"tool\",\"id\":\"t1\",\"name\":\"edit\",\"state\":{\"status\":\"completed\",\"input\":{\"path\":\"$p/theme.txt\",\"oldString\":\"a\",\"newString\":\"b\"},\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]},\"time\":{\"created\":1790000003000}},{\"type\":\"tool\",\"id\":\"t2\",\"name\":\"todowrite\",\"state\":{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Remember the choice\",\"status\":\"pending\"}]},\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]},\"time\":{\"created\":1790000004000}},{\"type\":\"text\",\"text\":\"The toggle is in the settings.\"}],\"snapshot\":{\"files\":[\"$p/settings.txt\"]}}');
+    insert into session_message values ('m3', 'o-1', 'idle', 3, 1790000005000, 1790000005000, '{\"time\":{\"created\":1790000005000},\"outcome\":\"succeeded\"}');
+    insert into session_message values ('m4', 'o-2', 'user', 1, 1790000006000, 1790000006000, '{\"time\":{\"created\":1790000006000},\"text\":\"fix the footer\"}');"
+  on A sessions App
+  for want in "Dark mode toggle" "add a dark mode toggle" "The toggle is in the settings." "Remember the choice" "theme.txt" "settings.txt" "fix the footer"; do
+    case $OUT in *"$want"*) ;; *) fail "missing: $want"; return 1 ;; esac
+  done
+  case $OUT in *"a subagent"*) fail "subagent session listed"; return 1 ;; esac
+  n=$(printf '%s\n' "$OUT" | grep -c -E "^ +[0-9]+ +. Dark mode toggle")
+  check "1.x copy counted too" [ "$n" -le 1 ] || return 1
+  on A session App o-1
+  case $OUT in *"#### ▌ you"*"dark mode"*"#### ▌ opencode"*"edit"*"theme.txt"*"settings."*) ;; *) fail "transcript"; return 1 ;; esac
+  case $OUT in *"secret thoughts"*) fail "reasoning shown"; return 1 ;; esac
+}
+
 # ---------------------------------------------------------------- Markdown reader
 t_markdown_never_wider_than_asked() {
   local w line bad=0

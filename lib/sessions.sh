@@ -22,13 +22,16 @@ SESS_DEFS='def clip($n): gsub("[[:cntrl:]]+"; " ") | gsub("^ +| +$"; "") | if le
 
 sess_icon() {  # $1 tool → colored mark
   case $1 in
-    claude) printf '\033[38;5;173m✻%s' "$C_RESET" ;;
-    codex)  printf '\033[38;5;36m◇%s' "$C_RESET" ;;
+    claude)   printf '\033[38;5;173m✻%s' "$C_RESET" ;;
+    codex)    printf '\033[38;5;36m◇%s' "$C_RESET" ;;
+    gemini)   printf '\033[38;5;75m✦%s' "$C_RESET" ;;
+    copilot)  printf '\033[38;5;177m◈%s' "$C_RESET" ;;
+    opencode) printf '\033[38;5;250m▣%s' "$C_RESET" ;;
     *)      printf '%s◦%s' "$C_MUTED" "$C_RESET" ;;
   esac
 }
-[ "$UI_FANCY" = 1 ] || sess_icon() { case $1 in claude) printf '*' ;; codex) printf '>' ;; *) printf '-' ;; esac; }
-sess_name() { case $1 in claude) echo "Claude" ;; codex) echo "Codex" ;; *) echo "$1" ;; esac; }
+[ "$UI_FANCY" = 1 ] || sess_icon() { case $1 in claude) printf '*' ;; codex) printf '>' ;; gemini) printf '+' ;; copilot) printf '@' ;; opencode) printf '#' ;; *) printf '-' ;; esac; }
+sess_name() { case $1 in claude) echo "Claude" ;; codex) echo "Codex" ;; gemini) echo "Gemini" ;; copilot) echo "Copilot" ;; opencode) echo "opencode" ;; *) echo "$1" ;; esac; }
 
 sess_redact() {  # stdin → stdout, keys and passwords masked
   sed -E 's/(sk-ant-|sk-|gh[pousr]_|github_pat_|xox[abpr]-|glpat-)[A-Za-z0-9_-]{8,}/\1…/g
@@ -105,6 +108,310 @@ sess_codex_rows() {  # $1 project path, $2 mac → rows, newest first (threads t
     done
 }
 
+# ---------------------------------------------------------------- Gemini CLI, GitHub Copilot CLI, opencode
+# Gemini CLI: ${GEMINI_CLI_HOME:-~}/.gemini/tmp/<slug>/.project_root holds the project's path (older versions:
+#   the folder is the sha256 of the path); chats/session-*.jsonl — a header {sessionId, kind}, messages
+#   {id, type user|gemini|info|error|warning, content, toolCalls[]}, written again in full under the same id
+#   on every change, {"$set": …} updates (summary and memoryScratchpad arrive late, if at all; a $set of
+#   messages is a checkpoint) and {"$rewindTo": id}. Older: one session-*.json, beside its .jsonl once resumed.
+# Copilot CLI: ${COPILOT_HOME:-~/.copilot}/session-state/<id>/workspace.yaml (id, cwd, branch, name or summary)
+#   and events.jsonl — {type user.message|assistant.message|tool.execution_start, timestamp, agentId (only
+#   for sub-agents, whose events land in the same file), data}; todos in <id>/session.db, older: plan.md.
+# opencode: ${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db (or $OPENCODE_DB). 2.x: session_v2
+#   (directory, title or null, parent_id for subagents, time_updated in ms) and session_message (type user|
+#   assistant|shell|compaction|…, data JSON; assistant content[] of {type text|reasoning|tool}). 1.x: session,
+#   message, part, todo — an upgraded database keeps those next to the copies in session_v2, so they count
+#   only where session_v2 is missing.
+
+# jq: the text of a Gemini "content" (a string, a part {text} or a list of parts)
+SESS_GEM_TEXT='def gtext: if type == "string" then . elif type == "array" then (map(if type == "string" then . else (.text // "") end) | join(" ")) elif type == "object" then (.text // "") else "" end;'
+# jq: Gemini's records replayed the way Gemini reads them → {meta, msgs} (the last version of each message, in order)
+SESS_GEM_REPLAY='def gadd($mm): (if .x[$mm.id] == null then .o += [$mm.id] else . end) | .x[$mm.id] = $mm;
+def greplay: reduce .[] as $r ({m: {}, o: [], x: {}};
+  if ($r | type) != "object" then .
+  elif $r | has("$set") then
+    (if ($r["$set"].messages | type) == "array" then .o = [] | .x = {} | reduce $r["$set"].messages[] as $mm (.; gadd($mm)) else . end)
+    | .m += ($r["$set"] | del(.messages))
+  elif $r | has("$rewindTo") then
+    (.o | index([$r["$rewindTo"]])) as $i | .o = (if $i == null then [] else .o[:$i] end)
+    | .o as $o | .x |= with_entries(select(.key | IN($o[])))
+  elif ($r.id | type) == "string" then gadd($r)
+  elif $r | has("sessionId") then .m += $r
+  else . end) | {meta: .m, msgs: [.o[] as $k | .x[$k]]};'
+
+sess_row_cached() {  # $1 tool, $2 cache id, $3 file, then a command that prints the row → the row, cached per size and date
+  local tool=$1 id=$2 f=$3 key c
+  shift 3
+  key="$(stat -f '%m %z' "$f" 2>/dev/null)"
+  c="$SESS_CACHE/$tool-$id.row"
+  if [ -f "$c" ] && [ "$(head -1 "$c")" = "$key" ]; then sed -n 2p "$c"; return; fi
+  mkdir -p "$SESS_CACHE"
+  { echo "$key"; "$@"; } > "$c"
+  sed -n 2p "$c"
+}
+
+sess_gemini_dirs() {  # $1 project path → Gemini's folders for it
+  local d hash
+  hash=$(printf '%s' "$1" | shasum -a 256 | cut -c1-64)
+  # ~/.cache/.gemini: where Gemini keeps them when it runs in the macOS sandbox
+  for d in "${GEMINI_CLI_HOME:-$HOME}"/.gemini/tmp/*/ "${GEMINI_CLI_HOME:-$HOME}"/.cache/.gemini/tmp/*/; do
+    d=${d%/}
+    if [ "$(cat "$d/.project_root" 2>/dev/null)" = "$1" ] || [ "${d##*/}" = "$hash" ]; then echo "$d"; fi
+  done
+}
+
+sess_gemini_records() {  # $1 file → its records as JSON lines; an old .json becomes its messages plus a {"$set": header}
+  if [ "${1%.jsonl}" != "$1" ]; then
+    # whole, as Gemini reads it; a giant file: the header and the recent end
+    if [ "$(stat -f %z "$1")" -lt 20000000 ]; then cat "$1"; else head -1 "$1"; tail -n 5000 "$1"; fi
+  else jq -c '(.messages[]?), {"$set": del(.messages)}' "$1" 2>/dev/null; fi
+}
+
+sess_gemini_row1() {  # $1 file → "gemini id updated - prompts title" (tabs); nothing for subagents
+  sess_gemini_records "$1" |
+    jq -rRs "$SESS_DEFS $SESS_GEM_TEXT $SESS_GEM_REPLAY"' [split("\n")[] | fromjson? // empty] | greplay | .meta as $m |
+      select(($m.kind // "main") != "subagent") |
+      [.msgs[] | select(.type == "user")] as $u |
+      ["gemini", ($m.sessionId // "-"), "", "-", ($u | length | tostring),
+       ((($m.summary // "") | clip(80)) as $s | if $s != "" then $s else (($u | first // {}) .content | gtext | clip(80)) end)] | @tsv' 2>/dev/null
+}
+
+sess_gemini_rows() {  # $1 project path, $2 mac → rows, newest first
+  local d f row now
+  sess_jq || return 0
+  now=$(date +%s)
+  for d in $(sess_gemini_dirs "$1"); do
+    for f in $(ls -t "$d/chats" 2>/dev/null | grep -E '\.jsonl?$' | head -12); do
+      f="$d/chats/$f"
+      [ "${f%.json}" != "$f" ] && [ -f "${f}l" ] && continue   # an old .json that was resumed: its .jsonl carries on
+      row=$(sess_row_cached gemini "$(basename "$f")" "$f" sess_gemini_row1 "$f")
+      [ -n "$row" ] || continue
+      printf '%s\t%s\n' "$row" "$f" | awk -F'\t' -v OFS='\t' -v m="$2" -v up="$(stat -f %m "$f")" -v now="$now" \
+        '{ t = $6 == "" ? "(untitled)" : $6; print m, "local", $1, $2, up, $4, $5, (now - up < 120 ? 1 : 0), t, $7 }'
+    done
+  done
+}
+
+sess_yaml() {  # $1 key, $2 file → its top-level value: plain, quoted, or the first line of a | or > block
+  awk -v k="$1" 'index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v)
+    if (v ~ /^[|>]/) { getline; sub(/^ +/, ""); v = $0 } else if (v ~ /^["\047]/) { v = substr(v, 2); sub(/["\047] *$/, "", v) }
+    print v; exit }' "$2" | tr -d '\000-\037'
+}
+
+sess_copilot_rows() {  # $1 project path, $2 mac → rows, newest first
+  local d w f id title branch now up n
+  now=$(date +%s)
+  for d in $(ls -td "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/ 2>/dev/null | head -60); do
+    d=${d%/}; w="$d/workspace.yaml"; f="$d/events.jsonl"
+    [ -f "$w" ] && [ -f "$f" ] || continue
+    [ "$(sess_yaml cwd "$w")" = "$1" ] || continue
+    id=$(sess_yaml id "$w"); id=${id:-${d##*/}}
+    branch=$(sess_yaml branch "$w")
+    title=$(sess_yaml name "$w"); [ -n "$title" ] || title=$(sess_yaml summary "$w")
+    title=$(printf '%s' "$title" | cut -c1-80)
+    # prompts: the user's own — sub-agents' messages carry an agentId
+    up=$(stat -f %m "$f"); n=$(grep '"type":"user.message"' "$f" | grep -v -c '"agentId":')
+    printf '%s\tlocal\tcopilot\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$id" "$up" "${branch:--}" "$n" \
+      "$([ $((now - up)) -lt 120 ] && echo 1 || echo 0)" "${title:-(untitled)}" "$f"
+  done | sort -t"$TAB" -k5,5nr | head -12
+}
+
+sess_opencode_db() {  # → opencode's database
+  local d="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+  case ${OPENCODE_DB:-} in /*) echo "$OPENCODE_DB"; return ;; ?*) echo "$d/$OPENCODE_DB"; return ;; esac
+  if [ -f "$d/opencode.db" ]; then echo "$d/opencode.db"; else ls -t "$d"/opencode-*.db 2>/dev/null | head -1; fi
+}
+
+sess_opencode_v2() { [ -n "$(sqlite3 -readonly "$1" "select 1 from sqlite_master where name = 'session_v2'" 2>/dev/null)" ]; }
+
+sess_opencode_rows() {  # $1 project path, $2 mac → rows, newest first
+  local db p
+  db=$(sess_opencode_db); [ -f "$db" ] && command -v sqlite3 >/dev/null 2>&1 || return 0
+  p=$(printf '%s' "$1" | sed "s/'/''/g")
+  if sess_opencode_v2 "$db"; then
+    # an untitled session (no model reached yet, or an old fallback title) goes by its first prompt
+    sqlite3 -readonly -separator "$TAB" "$db" "
+      select '$2', 'local', 'opencode', s.id, s.time_updated / 1000, '-',
+             (select count(*) from session_message m where m.session_id = s.id and m.type = 'user'),
+             case when (strftime('%s', 'now') - s.time_updated / 1000) < 120 then 1 else 0 end,
+             replace(replace(replace(substr(coalesce(
+               case when s.title glob 'New session - *' then null else nullif(s.title, '') end,
+               (select nullif(trim(json_extract(m.data, '$.text')), '') from session_message m
+                  where m.session_id = s.id and m.type = 'user' order by m.seq limit 1),
+               '(untitled)'), 1, 80), char(10), ' '), char(13), ' '), char(9), ' '),
+             '$db'
+      from session_v2 s
+      where (s.directory = '$p' or s.directory like '$p/%') and s.parent_id is null and s.time_archived is null
+      order by s.time_updated desc limit 12" 2>/dev/null
+  else
+    sqlite3 -readonly -separator "$TAB" "$db" "
+      select '$2', 'local', 'opencode', s.id, s.time_updated / 1000, '-',
+             (select count(*) from message m where m.session_id = s.id and json_extract(m.data, '$.role') = 'user'),
+             case when (strftime('%s', 'now') - s.time_updated / 1000) < 120 then 1 else 0 end,
+             replace(replace(substr(coalesce(nullif(s.title, ''), '(untitled)'), 1, 80), char(10), ' '), char(9), ' '),
+             '$db'
+      from session s
+      where s.directory = '$p' and s.parent_id is null and s.time_archived is null
+      order by s.time_updated desc limit 12" 2>/dev/null
+  fi
+}
+
+# last state → lines "recap|prompt|reply\t<text>", "todo\t<status>\t<text>", "file\t<path>"
+sess_gemini_state() {  # $1 file, $2 project path
+  sess_jq || return 0
+  sess_gemini_records "$1" |
+    jq -rRs "$SESS_DEFS $SESS_GEM_TEXT $SESS_GEM_REPLAY"' [split("\n")[] | fromjson? // empty] | greplay | .meta as $m | .msgs as $r |
+      ([$r[] | select(.type == "gemini") | .toolCalls[]?]) as $tc |
+      ([$tc[] | select(.name == "write_todos") | .args.todos] | last // []) as $todos |
+      ( ($m.memoryScratchpad.workflowSummary // empty | "recap\t" + clip(300)),
+        ([$r[] | select(.type == "user") | .content | gtext | select(length > 0)] | last // empty | "prompt\t" + clip(300)),
+        ([$r[] | select(.type == "gemini") | .content | gtext | select(length > 0)] | last // empty | "reply\t" + clip(500)),
+        ($todos[]? | "todo\t\(.status // "pending")\t\((.description // .content // "") | clip(90))"),
+        (([$m.memoryScratchpad.touchedPaths[]?] +
+          [$tc[] | select(.name != "write_todos" and (.name | test("write|replace|edit"; "i"))) | (.args.file_path // .args.path // empty)])
+          | unique[] | "file\t" + .) )' 2>/dev/null | sed "s#	$2/#	#" | head -40
+}
+
+# jq: a Copilot tool call's arguments (an object, JSON text, or apply_patch's bare patch) → the files it changes
+SESS_COP_FILES='def cargs: if type == "string" then (fromjson? // {patch: .}) elif type == "object" then . else {} end;
+def cfiles: cargs | ((.path // .file_path // .filePath // empty),
+  ((.patch // .input // "") | strings | scan("\\*\\*\\* (?:Add|Update|Delete) File: ([^\\n]+)") | .[0]));'
+
+sess_copilot_state() {  # $1 events.jsonl, $2 project path
+  local f=$1 d plan
+  sess_jq || return 0
+  d=$(dirname "$f")
+  tail -n 3000 "$f" | grep -E '"type":"(user\.message|assistant\.message|tool\.execution_start)"' |
+    jq -rRs "$SESS_DEFS $SESS_COP_FILES"' [split("\n")[] | fromjson? // empty] as $r |
+      ( ([$r[] | select(.type == "user.message" and .agentId == null and .data.isAutopilotContinuation != true)
+          | (.data.content // .data.transformedContent // "") | select(length > 0)] | last // empty | "prompt\t" + clip(300)),
+        ([$r[] | select(.type == "assistant.message" and .agentId == null) | (.data.content // "") | strings | select(length > 0)] | last // empty | "reply\t" + clip(500)),
+        ([$r[] | select(.type == "tool.execution_start" and ((.data.toolName // "") | test("edit|create|write|str_replace|patch"; "i")))
+          | .data.arguments | cfiles] | unique[] | "file\t" + .) )' 2>/dev/null |
+    sed "s#	$2/#	#"
+  # todos: the session's own database; older versions kept them as checkboxes in plan.md
+  if [ -f "$d/session.db" ] && command -v sqlite3 >/dev/null 2>&1 &&
+     [ -n "$(sqlite3 -readonly "$d/session.db" "select 1 from sqlite_master where name = 'todos'" 2>/dev/null)" ]; then
+    sqlite3 -readonly -separator "$TAB" "$d/session.db" "
+      select 'todo', case status when 'done' then 'completed' else coalesce(status, 'pending') end, substr(replace(title, char(10), ' '), 1, 90)
+      from todos order by created_at, rowid limit 12" 2>/dev/null
+    return 0
+  fi
+  plan="$d/plan.md"
+  [ -f "$plan" ] && sed -n -E 's/^[[:space:]]*[-*] \[([ xX])\] (.*)$/\1	\2/p' "$plan" | head -12 |
+    awk -F'\t' '{ printf "todo\t%s\t%s\n", ($1 == " " ? "pending" : "completed"), substr($2, 1, 90) }'
+  return 0
+}
+
+sess_opencode_state() {  # $1 db, $2 project path, $3 session id
+  local db=$1 id
+  id=$(printf '%s' "$3" | sed "s/'/''/g")
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+  if sess_opencode_v2 "$db"; then
+    # 2.x has no todo list any more; a session migrated from 1.x still carries its last todowrite call
+    sqlite3 -readonly -separator "$TAB" "$db" "
+      select 'recap', replace(replace(substr(json_extract(data, '$.summary'), 1, 300), char(10), ' '), char(9), ' ')
+        from session_message where session_id = '$id' and type = 'compaction' and json_extract(data, '$.status') = 'completed'
+        order by seq desc limit 1;
+      select 'prompt', replace(replace(substr(json_extract(data, '$.text'), 1, 300), char(10), ' '), char(9), ' ')
+        from session_message where session_id = '$id' and type = 'user' order by seq desc limit 1;
+      select 'reply', replace(replace(substr(json_extract(c.value, '$.text'), 1, 500), char(10), ' '), char(9), ' ')
+        from session_message m, json_each(m.data, '$.content') c
+        where m.session_id = '$id' and m.type = 'assistant' and json_extract(c.value, '$.type') = 'text'
+          and trim(coalesce(json_extract(c.value, '$.text'), '')) != ''
+        order by m.seq desc, c.key desc limit 1;
+      select 'todo', coalesce(json_extract(t.value, '$.status'), 'pending'), substr(replace(json_extract(t.value, '$.content'), char(10), ' '), 1, 90)
+        from json_each((select json_extract(c.value, '$.state.input.todos') from session_message m, json_each(m.data, '$.content') c
+          where m.session_id = '$id' and m.type = 'assistant' and json_extract(c.value, '$.type') = 'tool' and json_extract(c.value, '$.name') = 'todowrite'
+          order by m.seq desc, c.key desc limit 1)) t limit 12;
+      select 'file', f from (
+        select coalesce(json_extract(c.value, '$.state.input.path'), json_extract(c.value, '$.state.input.filePath')) f
+          from session_message m, json_each(m.data, '$.content') c
+          where m.session_id = '$id' and m.type = 'assistant' and json_extract(c.value, '$.type') = 'tool'
+            and json_extract(c.value, '$.name') in ('edit', 'write', 'multiedit')
+        union
+        select s.value from session_message m, json_each(m.data, '$.snapshot.files') s
+          where m.session_id = '$id' and m.type = 'assistant')
+        where f is not null limit 15;" 2>/dev/null | sed "s#	$2/#	#"
+    return 0
+  fi
+  sqlite3 -readonly -separator "$TAB" "$db" "
+    select 'prompt', replace(replace(substr(json_extract(p.data, '$.text'), 1, 300), char(10), ' '), char(9), ' ')
+      from part p join message m on m.id = p.message_id
+      where p.session_id = '$id' and json_extract(m.data, '$.role') = 'user' and json_extract(p.data, '$.type') = 'text'
+        and coalesce(json_extract(p.data, '$.synthetic'), 0) = 0
+      order by p.time_created desc limit 1;
+    select 'reply', replace(replace(substr(json_extract(p.data, '$.text'), 1, 500), char(10), ' '), char(9), ' ')
+      from part p join message m on m.id = p.message_id
+      where p.session_id = '$id' and json_extract(m.data, '$.role') = 'assistant' and json_extract(p.data, '$.type') = 'text'
+      order by p.time_created desc limit 1;
+    select 'todo', status, substr(replace(content, char(10), ' '), 1, 90) from todo where session_id = '$id' order by position limit 12;
+    select distinct 'file', json_extract(data, '$.state.input.filePath') from part
+      where session_id = '$id' and json_extract(data, '$.type') = 'tool' and json_extract(data, '$.tool') in ('edit', 'write', 'patch', 'multiedit')
+        and json_extract(data, '$.state.input.filePath') is not null
+      limit 15;" 2>/dev/null | sed "s#	$2/#	#"
+}
+
+# transcripts as Markdown (same "\001speaker\001time" blocks as Claude and Codex)
+sess_gemini_md() {  # $1 file
+  sess_gemini_records "$1" |
+    jq -rRs "$SESS_DEFS $SESS_GEM_TEXT $SESS_GEM_REPLAY"' [split("\n")[] | fromjson? // empty] | greplay | .msgs[] |
+      select(.type == "user" or .type == "gemini") |
+      (try (.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | localtime | strftime("%d.%m. %H:%M")) catch "") as $t |
+      if .type == "user" then (.content | gtext) as $x | select($x != "") | "\u0001you\u0001\($t)\n\($x)"
+      else
+        ((.content | gtext) as $x | select($x != "") | "\u0001gemini\u0001\($t)\n\($x)"),
+        (.toolCalls[]? | ((.args.file_path // .args.path // .args.dir_path // .args.command // .args.pattern // "") | tostring | clip(90) | gsub("`"; "'"'"'")) as $a |
+          "\u0001gemini\u0001\($t)\n- ⚙ **\(.displayName // .name)**" + (if $a == "" then "" else " `\($a)`" end))
+      end' 2>/dev/null | sess_md_group
+}
+
+sess_copilot_md() {  # $1 events.jsonl — the main agent's conversation; sub-agents show by their tool calls
+  tail -n 3000 "$1" | grep -E '"type":"(user\.message|assistant\.message|tool\.execution_start)"' |
+    jq -rR "$SESS_DEFS $SESS_COP_FILES"' fromjson? // empty |
+      (try (.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | localtime | strftime("%d.%m. %H:%M")) catch "") as $t |
+      if .type == "user.message" then select(.agentId == null) | (.data.content // .data.transformedContent // "") as $x | select($x != "") | "\u0001you\u0001\($t)\n\($x)"
+      elif .type == "assistant.message" then select(.agentId == null) | (.data.content // "") | strings | select(. != "") | "\u0001copilot\u0001\($t)\n\(.)"
+      else (.data.arguments | cargs | (.path // .command // .pattern // ([cfiles] | join(", ")) // "") | tostring | clip(90) | gsub("`"; "'"'"'")) as $a |
+        "\u0001copilot\u0001\($t)\n- ⚙ **\(.data.toolName // "tool")**" + (if $a == "" then "" else " `\($a)`" end)
+      end' 2>/dev/null | sess_md_group
+}
+
+sess_opencode_md() {  # $1 db, $2 session id
+  local id
+  id=$(printf '%s' "$2" | sed "s/'/''/g")
+  if sess_opencode_v2 "$1"; then
+    sqlite3 -readonly "$1" "
+      select json_object('type', type, 'time', time_created / 1000, 'data', json(data))
+      from session_message where session_id = '$id' order by seq" 2>/dev/null |
+      jq -rR "$SESS_DEFS"' fromjson? // empty | (.time | localtime | strftime("%d.%m. %H:%M")) as $t | .data as $d |
+        if .type == "user" then ($d.text // "") as $x | select($x != "") | "\u0001you\u0001\($t)\n\($x)"
+        elif .type == "shell" then "\u0001you\u0001\($t)\n- ⚙ **shell** `\($d.command // "" | tostring | clip(90) | gsub("`"; "'"'"'"))`"
+        elif .type == "assistant" then $d.content[]? |
+          if .type == "text" and ((.text // "") != "") then "\u0001opencode\u0001\($t)\n\(.text)"
+          elif .type == "tool" then (.state.input | if type == "object" then (.path // .filePath // .command // .pattern // .description // "") else "" end
+              | tostring | clip(90) | gsub("`"; "'"'"'")) as $a |
+            "\u0001opencode\u0001\($t)\n- ⚙ **\(.name)**" + (if $a == "" then "" else " `\($a)`" end)
+          else empty end
+        else empty end' 2>/dev/null | sess_md_group
+    return
+  fi
+  sqlite3 -readonly "$1" "
+    select json_object('role', json_extract(m.data, '$.role'), 'time', p.time_created / 1000, 'part', json(p.data))
+    from part p join message m on m.id = p.message_id
+    where p.session_id = '$id' order by p.time_created, p.id" 2>/dev/null |
+    jq -rR "$SESS_DEFS"' fromjson? // empty | (.time | localtime | strftime("%d.%m. %H:%M")) as $t |
+      (if .role == "user" then "you" else "opencode" end) as $who | .part |
+      if .type == "text" and (.synthetic | not) and ((.text // "") != "") then "\u0001\($who)\u0001\($t)\n\(.text)"
+      elif .type == "tool" then ((.state.input.filePath // .state.input.command // .state.input.pattern // "") | tostring | clip(90) | gsub("`"; "'"'"'")) as $a |
+        "\u0001\($who)\u0001\($t)\n- ⚙ **\(.tool)**" + (if $a == "" then "" else " `\($a)`" end)
+      else empty end' 2>/dev/null | sess_md_group
+}
+
+sess_other_rows() {  # $1 project path → this Mac's Gemini CLI, Copilot CLI and opencode sessions
+  sess_gemini_rows "$1" "$MAC"; sess_copilot_rows "$1" "$MAC"; sess_opencode_rows "$1" "$MAC"
+}
+
 # ---------------------------------------------------------------- all sessions of a project
 sess_digest_rows() {  # $1 project → rows from the other Macs' digests
   local f m
@@ -123,6 +430,7 @@ sess_rows() {  # $1 name, $2 path → every session of the project, newest first
     sess_claude_rows "$HOME/.claude/projects/$(claude_key "$2")" "$MAC" local "$live"
     [ "$CLAUDE_HISTORY" = 1 ] && sess_claude_rows "$CLAUDE_STORE/$1" "" pool "$live"
     sess_codex_rows "$2" "$MAC"
+    sess_other_rows "$2"
     sess_digest_rows "$1"
   } | sort -t"$TAB" -k5,5nr | awk -F'\t' -v OFS='\t' '
     # One session, several sources: keep the readable file (local before pool), but credit the Mac whose
@@ -186,7 +494,10 @@ sess_state() {  # $1 row, $2 project path, $3 project name → state lines; anot
 $1
 EOF
   if [ "$file" != - ] && [ -f "$file" ]; then
-    case $tool in claude) sess_claude_state "$file" "$2" ;; codex) sess_codex_state "$file" "$2" ;; esac
+    case $tool in
+      claude) sess_claude_state "$file" "$2" ;; codex) sess_codex_state "$file" "$2" ;; gemini) sess_gemini_state "$file" "$2" ;;
+      copilot) sess_copilot_state "$file" "$2" ;; opencode) sess_opencode_state "$file" "$2" "$id" ;;
+    esac
   elif [ "$mac" != - ]; then
     grep -E "^(recap|prompt|reply|todo|file)=$id$TAB" "$POOL/sessions/$mac/$3.txt" 2>/dev/null | sed "s/=$id$TAB/$TAB/"
   fi
@@ -231,7 +542,7 @@ sess_rows_local() {  # $1 name, $2 path → the sessions this Mac worked on (wha
     for f in "$POOL"/sessions/*/"$1.txt"; do
       [ -f "$f" ] && [ "$f" != "$POOL/sessions/$MAC/$1.txt" ] && sed -n "s/^session=/O$TAB/p" "$f"
     done
-    { sess_claude_rows "$HOME/.claude/projects/$(claude_key "$2")" "$MAC" local "$live"; sess_codex_rows "$2" "$MAC"; } |
+    { sess_claude_rows "$HOME/.claude/projects/$(claude_key "$2")" "$MAC" local "$live"; sess_codex_rows "$2" "$MAC"; sess_other_rows "$2"; } |
       sort -t"$TAB" -k5,5nr | sed "s/^/R$TAB/"
   } | awk -F'\t' '
     $1 == "O" { if ($4 > other[$2 SUBSEP $3]) other[$2 SUBSEP $3] = $4; next }
@@ -280,6 +591,13 @@ sess_codex_md() {  # $1 rollout → the last ~20 MB as Markdown
         "\u0001codex\u0001\($t)\n" + ([$p.item.content[]? | .text // empty] | join("\n"))
       elif $p.type == "function_call" or $p.type == "custom_tool_call" then "\u0001codex\u0001\($t)\n- ⚙ **\($p.name)**"
       else empty end' 2>/dev/null | sess_md_group
+}
+
+sess_md() {  # $1 tool, $2 file, $3 id → the transcript as Markdown
+  case $1 in
+    claude) sess_claude_md "$2" ;; codex) sess_codex_md "$2" ;; gemini) sess_gemini_md "$2" ;;
+    copilot) sess_copilot_md "$2" ;; opencode) sess_opencode_md "$2" "$3" ;;
+  esac
 }
 
 # ---------------------------------------------------------------- commands
@@ -420,7 +738,7 @@ session_cmd() {  # [project] [n] — read a session's transcript
   sess_jq || { say_err "reading transcripts needs jq — macOS 15 has it, or: brew install jq"; return 1; }
   md=$(mktemp -t roam-session) || return 1
   { printf '# %s\n\n*%s · %s · %s*\n' "$title" "$(sess_name "$tool")" "$(sess_where "$(printf '%s' "$row" | cut -f1)")" "$P_NAME"
-    case $tool in claude) sess_claude_md "$file" ;; codex) sess_codex_md "$file" ;; esac
+    sess_md "$tool" "$file" "$(printf '%s' "$row" | cut -f4)"
   } > "$md"
   if [ -t 1 ]; then md_view "$md" "$(sess_name "$tool") · $(trunc "$title" 50)"; else cat "$md"; fi
   rm -f "$md"
@@ -436,13 +754,16 @@ continue_cmd() {  # [project] [n] — pick the session up again: claude --resume
   if [ "$tool" = claude ] && [ ! -f "$HOME/.claude/projects/$(claude_key "$P_PATH")/$id.jsonl" ]; then
     say_err "that session is on $(sess_where "$(printf '%s' "$row" | cut -f1)") — 'roam resume' brings its transcript here (with claude_history = 1)"; return 1
   fi
-  if [ "$tool" = codex ] && [ ! -f "$file" ]; then say_err "Codex sessions stay on their Mac — continue it on $(sess_where "$(printf '%s' "$row" | cut -f1)")"; return 1; fi
+  if [ "$tool" != claude ] && [ ! -f "$file" ]; then say_err "$(sess_name "$tool") sessions stay on their Mac — continue it on $(sess_where "$(printf '%s' "$row" | cut -f1)")"; return 1; fi
   [ -d "$P_PATH" ] || { say_err "$P_NAME isn't on this Mac — roam resume"; return 1; }
   printf '\n  %s %s · %s\n\n' "$(sess_icon "$tool")" "$(sess_name "$tool")" "$(short_path "$P_PATH")"
   cd "$P_PATH" || return 1
   case $tool in
-    claude) command -v claude >/dev/null 2>&1 && exec claude --resume "$id" ;;
-    codex)  command -v codex >/dev/null 2>&1 && exec codex resume "$id" ;;
+    claude)   command -v claude >/dev/null 2>&1 && exec claude --resume "$id" ;;
+    codex)    command -v codex >/dev/null 2>&1 && exec codex resume "$id" ;;
+    gemini)   command -v gemini >/dev/null 2>&1 && exec gemini --resume "$id" ;;
+    copilot)  command -v copilot >/dev/null 2>&1 && exec copilot --resume="$id" ;;
+    opencode) command -v opencode >/dev/null 2>&1 && exec opencode --session "$id" ;;
   esac
   say_err "$(sess_name "$tool") isn't installed on this Mac"; return 1
 }

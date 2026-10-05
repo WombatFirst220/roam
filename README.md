@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.3.2                                                                               14:02
+ ◆ roam  v1.4.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -151,13 +151,22 @@ $ roam sessions MyApp
 |---|---|
 | `roam sessions` | inside a project: its sessions; elsewhere: the newest session of every project |
 | `roam session MyApp 2` | read session 2 — prompts, replies, one line per tool call — in a scrollable reader |
-| `roam continue MyApp` | `claude --resume` / `codex resume` that session, in the project folder |
+| `roam continue MyApp` | picks that session up again in its tool (`claude --resume`, `codex resume`, …), in the project folder |
 | `roam read MyApp` | README, CLAUDE.md, AGENTS.md, TODO, CHANGELOG, docs … rendered in the same reader |
 
 The app shows them too: each project's newest session in the preview, all of them under ⏎ › Sessions.
 
-- **This Mac** is read live from Claude Code (`~/.claude/projects`) and Codex (its own database,
-  read-only) — only the end of a transcript, so even 200 MB sessions open instantly.
+- **This Mac** is read live, straight from each tool's own files — only the end of a transcript, so even
+  200 MB sessions open instantly:
+
+  | | Tool | Where roam reads it |
+  |---|---|---|
+  | ✻ | Claude Code | `~/.claude/projects/<path>/` |
+  | ◇ | Codex | its own database in `~/.codex`, read-only |
+  | ✦ | Gemini CLI | `~/.gemini/tmp/<project>/chats/` |
+  | ◈ | GitHub Copilot CLI | `~/.copilot/session-state/` (or `$COPILOT_HOME`) |
+  | ▣ | opencode | its database in `~/.local/share/opencode/`, read-only |
+
 - **Other Macs** leave a digest per project in the pool (`sessions/<Mac>/<project>.txt`, at most 8 KB):
   title, branch, todos, changed files and — with `session_digest = 2`, the default — the last prompt,
   reply and recap, with API keys, tokens and passwords masked. `session_digest = 1` leaves out the
@@ -178,7 +187,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam add [folder]` | takes a project along: pick its folder (or Finder), or give a path or git address |
 | `roam sessions [project]` | AI sessions on every Mac and where they stopped |
 | `roam session <project> [n]` | read a session |
-| `roam continue <project> [n]` | pick a session up again in Claude Code or Codex |
+| `roam continue <project> [n]` | pick a session up again in Claude Code, Codex, Gemini CLI, Copilot CLI or opencode |
 | `roam read [project] [file]` | the project's Markdown files in the reader |
 | `roam status` | the dashboard without the menu |
 | `roam setup` | set up or repair this Mac |
