@@ -120,6 +120,42 @@ t_resume_repairs_a_placeholder_transcript() {
   check "placeholder was not repaired" grep -q good "$(claude_dir B)/s1.jsonl"
 }
 
+t_placeholder_memory_never_overwrites_the_pool_copy() {
+  sed -i '' 's/^claude_history = 1/claude_history = 0/' "$T/pool/settings"   # memory only: the filter must not let it through
+  mkdir -p "$(claude_dir A)/memory" "$(claude_dir B)/memory"
+  echo 'good note' > "$(claude_dir A)/memory/m.md"
+  on A park
+  head -c "$(stat -f %z "$(claude_dir A)/memory/m.md")" /dev/zero > "$(claude_dir B)/memory/m.md"
+  touch -t 203001010000 "$(claude_dir B)/memory/m.md"
+  on B park
+  check "pool memory was overwritten by the placeholder" grep -q good "$T/pool/claude/App/memory/m.md"
+}
+
+t_resume_repairs_placeholder_memory() {
+  mkdir -p "$(claude_dir A)/memory" "$(claude_dir B)/memory"
+  echo 'good note' > "$(claude_dir A)/memory/m.md"
+  on A park
+  head -c "$(stat -f %z "$(claude_dir A)/memory/m.md")" /dev/zero > "$(claude_dir B)/memory/m.md"
+  touch -r "$T/pool/claude/App/memory/m.md" "$(claude_dir B)/memory/m.md"
+  on B resume
+  check "placeholder memory was not repaired" grep -q good "$(claude_dir B)/memory/m.md"
+}
+
+t_placeholder_without_disk_blocks_is_caught_too() {
+  local pf
+  mkdir -p "$(claude_dir A)/memory"
+  echo 'good note' > "$(claude_dir A)/memory/m.md"
+  on A park
+  # the pool copy turns into a sparse file: a size, no blocks, reads as NUL bytes
+  pf="$T/pool/claude/App/memory/m.md"
+  rm "$pf"; dd if=/dev/zero of="$pf" bs=1 count=0 seek=10 2>/dev/null
+  touch -t 203001010000 "$pf"
+  on A resume
+  check "local memory was overwritten by the sparse pool copy" grep -q good "$(claude_dir A)/memory/m.md" || return 1
+  on A park
+  check "park did not repair the pool copy" grep -q good "$pf"
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

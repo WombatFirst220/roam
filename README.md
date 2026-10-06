@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.4.0                                                                               14:02
+ ◆ roam  v1.4.1                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -226,8 +226,8 @@ Macs sync** (iCloud Drive, Dropbox, kDrive, a network share — any will do).
   snapshot until they're in `.gitignore`. Files over 50 MB too.
 - **Claude Code comes along.** Memory (and optionally session transcripts, for
   `claude --resume`) lives in `~/.claude/projects/<path>/`. roam mirrors it through the pool —
-  which is why a project has to live at the same path on every Mac. A transcript your sync app left
-  as an empty placeholder never overwrites a good copy, and `roam resume` restores it from the pool.
+  which is why a project has to live at the same path on every Mac. A transcript or memory file your
+  sync app left as NUL bytes never overwrites a good copy, and `roam resume` restores it from the pool.
 
 ## What `roam doctor` checks
 
@@ -235,7 +235,7 @@ Without any configuration, by looking at your projects:
 
 | Found in a project | Checked |
 |---|---|
-| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions the sync app left empty |
+| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions and memory the sync app left empty |
 | `*.xcodeproj` | full Xcode, first-launch setup, iOS Simulator, iOS SDK ≥ highest `IPHONEOS_DEPLOYMENT_TARGET`, a signing certificate for every `DEVELOPMENT_TEAM` |
 | `package.json` | Node, installed packages (`npm ci` / `pnpm` / `yarn` by lockfile) |
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |

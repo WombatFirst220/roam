@@ -281,39 +281,40 @@ resume_project() {  # $1 name
 # ---------------------------------------------------------------- Claude Code
 claude_key() { printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g'; }
 
-# A sync app sometimes leaves a transcript as a file of NUL bytes: right size and date, content never
-# downloaded. rsync would see nothing to do — or worse, spread it over the good copy.
-is_placeholder() {  # $1 file: occupies disk space, yet starts with nothing but NUL bytes
-  [ "$(stat -f %b "$1" 2>/dev/null || echo 0)" -gt 0 ] && [ -z "$(head -c 512 "$1" | tr -d '\000')" ]
+# A sync app sometimes leaves a file as NUL bytes: right size and date, content never downloaded —
+# transcripts and memory files alike, in ~/.claude and in the pool. rsync would see nothing to do — or
+# worse, spread it over the good copy. Such a file may occupy no disk space at all, so only the content counts.
+is_placeholder() {  # $1 file: has a size, yet starts with nothing but NUL bytes
+  [ -s "$1" ] && [ -z "$(head -c 512 "$1" | tr -d '\000')" ]
 }
 
 claude_sync() {  # $1 name, $2 project path, $3 up|down
-  local local_dir="$HOME/.claude/projects/$(claude_key "$2")" store="$CLAUDE_STORE/$1" filter="" src dst bad f
+  local local_dir="$HOME/.claude/projects/$(claude_key "$2")" store="$CLAUDE_STORE/$1" filter="" scope=. src dst bad f
   # Session transcripts (for claude --resume) contain everything a session saw, including printed
   # credentials. claude_history = 0 in the pool settings limits this to memory.
-  [ "$CLAUDE_HISTORY" = 1 ] || filter="--include=memory/*** --exclude=*"
+  [ "$CLAUDE_HISTORY" = 1 ] || { filter="--include=memory/*** --exclude=*"; scope=./memory; }
   if [ "$3" = up ]; then src=$local_dir dst=$store; else src=$store dst=$local_dir; fi
   [ -d "$src" ] || return 0
   mkdir -p "$dst" || return
   bad=$(mktemp)
   # Placeholders never travel; a good copy on the other side repairs one there.
-  if [ "$CLAUDE_HISTORY" = 1 ]; then
-    while IFS= read -r f; do
-      f=${f#./}
-      if is_placeholder "$src/$f"; then printf '/%s\n' "$f" >> "$bad"
-      elif [ -f "$dst/$f" ] && is_placeholder "$dst/$f"; then cp -p "$src/$f" "$dst/$f" && log "$1: repaired the empty transcript $f"; fi
-    done <<EOF
-$(cd "$src" && find . -type f -name '*.jsonl')
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    f=${f#./}
+    if is_placeholder "$src/$f"; then printf '/%s\n' "$f" >> "$bad"
+    elif [ -f "$dst/$f" ] && is_placeholder "$dst/$f"; then cp -p "$src/$f" "$dst/$f" && log "$1: repaired the empty file $f"; fi
+  done <<EOF
+$(cd "$src" && [ -d "$scope" ] && find "$scope" -type f)
 EOF
-  fi
   # --update: the newer file wins. Transcripts have unique names; conflicts can only happen
-  # with memory files edited on two Macs at the same time.
-  rsync -a --update $filter --exclude-from="$bad" "$src/" "$dst/"
+  # with memory files edited on two Macs at the same time. The placeholder list comes first:
+  # rsync takes the first matching rule, and memory/*** would let them through.
+  rsync -a --update --exclude-from="$bad" $filter "$src/" "$dst/"
   rm -f "$bad"
 }
 
-placeholder_transcripts() {  # $1 project path → this Mac's transcripts that are only NUL bytes
+placeholder_files() {  # $1 project path → this Mac's Claude Code files (relative) that are only NUL bytes
   local d="$HOME/.claude/projects/$(claude_key "$1")" f
   [ -d "$d" ] || return 0
-  find "$d" -type f -name '*.jsonl' | while IFS= read -r f; do is_placeholder "$f" && echo "$f"; done
+  ( cd "$d" && find . -type f ) | while IFS= read -r f; do is_placeholder "$d/${f#./}" && echo "${f#./}"; done
 }
