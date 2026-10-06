@@ -95,6 +95,10 @@ check_mac() {
   else res missing "This Mac" "Git / Command Line Tools" "xcode-select --install"; fi
   if [ -n "$POOL" ] && [ -w "$POOL" ]; then res ok "This Mac" "Pool $(short_path "$POOL")"
   else res missing "This Mac" "pool folder not writable: $POOL" "" "check your sync app, then run roam setup"; fi
+  # Files the sync app holds online only (a size, no blocks on disk): reading one can hang, or hand out NUL bytes.
+  # stat doesn't download anything.
+  v=$( { find "$POOL" -type f -size +0c -print0 2>/dev/null | xargs -0 stat -f %b 2>/dev/null; } | grep -c '^0$')
+  [ "${v:-0}" -gt 0 ] && res hint "This Mac" "$v file$([ "$v" = 1 ] || echo s) in the pool $([ "$v" = 1 ] && echo is || echo are) online only on this Mac" "" "make the pool folder available offline in your sync app (kDrive: Make available offline · iCloud Drive: Keep Downloaded)"
   if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then res ok "This Mac" "Auto-park every $INTERVAL min"
   else res missing "This Mac" "Auto-park is not running" "roam setup"; fi
   have roam && res ok "This Mac" "roam on PATH" || res hint "This Mac" "roam is not on PATH" "" "add  export PATH=\"\$HOME/.local/bin:\$PATH\"  to ~/.zshrc"

@@ -121,7 +121,7 @@ report() {  # level name message → collected by run_all
 }
 
 run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a subshell, only reports
-  local mode=$1 name=$2 path="$PROJECTS_DIR/$3" remote=$4 elsewhere
+  local mode=$1 name=$2 path="$PROJECTS_DIR/$3" remote=$4 elsewhere way
   if [ ! -d "$path/.git" ]; then
     [ "$mode" = resume ] || return 0
     elsewhere=$(cloned_elsewhere "$remote" "$3")
@@ -136,9 +136,13 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
     report err "$name" "remote unreachable: $(origin_why)"
   fi
   case $mode in
-    park|auto) park_project "$name"; [ "$CLAUDE_SYNC" = 1 ] && claude_sync "$name" "$path" up ;;
-    resume)    resume_project "$name"; [ "$CLAUDE_SYNC" = 1 ] && claude_sync "$name" "$path" down ;;
+    park|auto) park_project "$name"; way=up ;;
+    resume)    resume_project "$name"; way=down ;;
   esac
+  if [ "$CLAUDE_SYNC" = 1 ]; then
+    with_timeout "$SYNC_TIMEOUT" claude_sync "$name" "$path" $way
+    [ $? = 124 ] && report err "$name" "Claude Code files: the pool didn't answer within ${SYNC_TIMEOUT}s — make the pool folder available offline in your sync app"
+  fi
   # where this Mac's AI sessions stopped, for the other Macs — never worth failing a run over
   sess_digest_write "$name" "$path" 2>/dev/null || log "$name: session digest failed"
   return 0

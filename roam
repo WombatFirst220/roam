@@ -18,7 +18,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.4.2
+ROAM_VERSION=1.4.3
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -70,6 +70,34 @@ use_pool() {  # derive every path and setting from $POOL
   MAX_BYTES=$(( $(v=$(conf_val max_file_mb "$SETTINGS"); echo "${v:-50}") * 1024 * 1024 ))
   SESSION_DIGEST=$(conf_val session_digest "$SETTINGS"); SESSION_DIGEST=${SESSION_DIGEST:-2}
 }
+
+# A sync app that holds files online only can block a read for good (kDrive did, for an hour). roam then
+# hung without a word — in the background too, holding the lock. Reads from the pool get a time limit.
+POOL_TIMEOUT=${ROAM_POOL_TIMEOUT:-30}
+SYNC_TIMEOUT=${ROAM_SYNC_TIMEOUT:-300}
+with_timeout() {  # $1 seconds, rest: command → its status, or 124 if it took longer
+  local s=$1 pid i=0; shift
+  "$@" & pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    # left behind: a read stuck in the sync app can't always be killed
+    [ $i -ge $((s * 10)) ] && { kill -9 "$pid" 2>/dev/null; disown "$pid" 2>/dev/null; return 124; }
+    sleep 0.1; i=$((i + 1))
+  done
+  wait "$pid"
+}
+pool_unreachable() {  # $1 message — ends the run; background runs leave a notification
+  printf '[%s] %s pool unreachable: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${CMD:-ui}" "$1" >> "$LOG" 2>/dev/null
+  if [ "$CMD" = auto ]; then
+    osascript -e "display notification \"$1\" with title \"roam\"" 2>/dev/null; exit 0
+  fi
+  printf '\n  ✗ %s\n\n' "$1" >&2; exit 1
+}
+case ${CMD:-} in setup|join|help|-h|--help|version|-v|--version) ;; *)
+  if [ -n "$POOL" ] && [ -d "$POOL" ]; then
+    with_timeout "$POOL_TIMEOUT" cat "$POOL/projects.conf" "$POOL/settings" >/dev/null 2>&1
+    [ $? = 124 ] && pool_unreachable "The pool didn't answer within ${POOL_TIMEOUT}s — is the sync app hanging? Make the pool folder available offline there."
+  fi ;;
+esac
 use_pool
 
 # New untracked files like these block parking a project: keys and credentials don't belong

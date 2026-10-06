@@ -165,6 +165,33 @@ t_binary_files_are_no_placeholders() {
   check "transcript with a cut-off umlaut did not travel" [ -f "$T/pool/claude/App/s2.jsonl" ]
 }
 
+t_a_hanging_pool_ends_the_run_with_a_message() {
+  local t0
+  rm "$T/pool/settings"; mkfifo "$T/pool/settings"            # reading it blocks, like a stuck sync app
+  t0=$(date +%s)
+  ROAM_POOL_TIMEOUT=2 on A park
+  check "park waited instead of giving up" [ $(( $(date +%s) - t0 )) -lt 10 ] || return 1
+  check "park didn't fail" [ $RC != 0 ] || return 1
+  case $OUT in *"didn't answer"*) ;; *) fail "no message about the pool"; return 1 ;; esac
+  ROAM_POOL_TIMEOUT=2 on A auto
+  check "auto should end quietly" [ $RC = 0 ] || return 1
+  check "auto didn't log it" grep -q "pool unreachable" "$T/A.log"
+}
+
+t_a_hanging_claude_sync_is_reported() {
+  mkdir -p "$T/bin" "$(claude_dir A)/memory"; echo note > "$(claude_dir A)/memory/m.md"
+  printf '#!/bin/sh\nsleep 30\n' > "$T/bin/rsync"; chmod +x "$T/bin/rsync"
+  PATH="$T/bin:$PATH" ROAM_SYNC_TIMEOUT=2 on A park
+  case $OUT in *"Claude Code files: the pool didn't answer"*) ;; *) fail "hanging Claude sync not reported"; return 1 ;; esac
+}
+
+t_doctor_warns_about_online_only_pool_files() {
+  dd if=/dev/zero of="$T/pool/claude/cloud.md" bs=1 count=0 seek=100 2>/dev/null   # a size, no blocks
+  [ "$(stat -f %b "$T/pool/claude/cloud.md")" = 0 ] || { ok; return; }              # file system without sparse files
+  on A doctor
+  case $OUT in *"online only on this Mac"*) ;; *) fail "no warning about online-only files"; return 1 ;; esac
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.4.2                                                                               14:02
+ ◆ roam  v1.4.3                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -196,7 +196,9 @@ The app shows them too: each project's newest session in the preview, all of the
 ## How it works
 
 roam has no server. It uses two things you already have: your **git remote** and a **folder your
-Macs sync** (iCloud Drive, Dropbox, kDrive, a network share — any will do).
+Macs sync** (iCloud Drive, Dropbox, kDrive, a network share — any will do). Keep the pool folder
+available offline on every Mac: files a sync app holds online only can block a read or arrive as NUL
+bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and `roam doctor` warns.
 
 ```
                  git remote (GitHub, GitLab, …)
@@ -235,7 +237,7 @@ Without any configuration, by looking at your projects:
 
 | Found in a project | Checked |
 |---|---|
-| always | git, remote reachable, pool writable, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions and memory the sync app left empty |
+| always | git, remote reachable, pool writable and available offline, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions and memory the sync app left empty |
 | `*.xcodeproj` | full Xcode, first-launch setup, iOS Simulator, iOS SDK ≥ highest `IPHONEOS_DEPLOYMENT_TARGET`, a signing certificate for every `DEVELOPMENT_TEAM` |
 | `package.json` | Node, installed packages (`npm ci` / `pnpm` / `yarn` by lockfile) |
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |
