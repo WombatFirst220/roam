@@ -2,7 +2,7 @@
 # Publish a new version: tag, push, update the formula in the tap.
 #   packaging/release.sh 1.0.1
 # Expects the tap cloned next to this repo as ../homebrew-tap.
-set -eu
+set -euo pipefail   # a failed download must stop the release, not hash nothing
 V=${1:?usage: packaging/release.sh <version>}
 cd "$(dirname "$0")/.."
 TAP=../homebrew-tap
