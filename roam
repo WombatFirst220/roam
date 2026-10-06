@@ -18,7 +18,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.4.3
+ROAM_VERSION=1.4.4
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -69,7 +69,10 @@ use_pool() {  # derive every path and setting from $POOL
   INTERVAL=$(conf_val interval_min "$SETTINGS"); INTERVAL=${INTERVAL:-10}
   MAX_BYTES=$(( $(v=$(conf_val max_file_mb "$SETTINGS"); echo "${v:-50}") * 1024 * 1024 ))
   SESSION_DIGEST=$(conf_val session_digest "$SETTINGS"); SESSION_DIGEST=${SESSION_DIGEST:-2}
+  # a Mac counts as online while its heartbeat (seen=, refreshed at least hourly) plus one interval is fresh
+  ONLINE_SECS=$(( HEARTBEAT + INTERVAL * 60 + 300 ))
 }
+HEARTBEAT=${ROAM_HEARTBEAT:-3600}
 
 # A sync app that holds files online only can block a read for good (kDrive did, for an hour). roam then
 # hung without a word — in the background too, holding the lock. Reads from the pool get a time limit.

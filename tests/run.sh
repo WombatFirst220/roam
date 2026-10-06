@@ -192,6 +192,22 @@ t_doctor_warns_about_online_only_pool_files() {
   case $OUT in *"online only on this Mac"*) ;; *) fail "no warning about online-only files"; return 1 ;; esac
 }
 
+t_status_file_is_only_rewritten_when_something_changed() {
+  local f="$T/pool/macs/A.txt" ino
+  on A park
+  check "no status file" [ -f "$f" ] || return 1
+  ino=$(stat -f %i "$f")
+  on A park
+  check "unchanged status was rewritten" [ "$(stat -f %i "$f")" = "$ino" ] || return 1
+  sed -i '' 's/^seen=.*/seen=1/' "$f"; ino=$(stat -f %i "$f")      # heartbeat long overdue
+  on A park
+  check "overdue heartbeat was not refreshed" [ "$(stat -f %i "$f")" != "$ino" ] || return 1
+  ino=$(stat -f %i "$f")
+  echo change >> "$T/A/dev/App/a.txt"
+  on A park
+  check "a changed project did not update the status" [ "$(stat -f %i "$f")" != "$ino" ]
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

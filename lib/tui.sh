@@ -265,7 +265,7 @@ EOF
     M_LABEL[j]=$mname
     local dot status d missing
     if [ "$m" = "$MAC" ]; then dot="${K_ACC}▸${K_R}"; status="${K_ACC}this Mac${K_R}"
-    elif [ $(( now - ${seen:-0} )) -lt $(( INTERVAL * 60 + 300 )) ]; then dot="${K_OK}●${K_R}"; status="${K_OK}online${K_R}"
+    elif [ $(( now - ${seen:-0} )) -lt "$ONLINE_SECS" ]; then dot="${K_OK}●${K_R}"; status="${K_OK}online${K_R}"
     else dot="${K_LINE}○${K_R}"; NOW=$now; tago "${seen:-0}"; status="${K_MUTED}$REPLY ago${K_R}"; fi
     missing=${doc#* }; missing=${missing%% *}
     if [ -z "$doc" ]; then d="${K_MUTED}not checked${K_R}"

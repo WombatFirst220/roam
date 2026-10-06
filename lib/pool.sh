@@ -51,6 +51,10 @@ registry_write() {
 $(projects)
 EOF
   } > "$tmp"
+  # Only seen= moved: keep the file. kDrive puts every version another Mac replaced into the Trash —
+  # a rewrite every 10 minutes filled it with hundreds. seen= still gets refreshed every HEARTBEAT seconds.
+  if [ -f "$target" ] && [ $(( $(date +%s) - $(v=$(val seen "$target"); echo "${v:-0}") )) -lt "$HEARTBEAT" ] &&
+     cmp -s <(grep -v '^seen=' "$tmp") <(grep -v '^seen=' "$target"); then rm -f "$tmp"; return 0; fi
   mv "$tmp" "$target"   # regardless of the last loop's exit status (an uncloned last project returns 1)
 }
 
@@ -267,7 +271,7 @@ dashboard() {  # $1 = "quick": skip fetching from the remotes
     m=$(basename "$f" .txt); macs="$macs $m"
     seen=$(val seen "$f")
     if [ "$m" = "$MAC" ]; then dot="${C_ACCENT}▸${C_RESET}"; status="${C_ACCENT}this Mac${C_RESET}"
-    elif [ $((now - ${seen:-0})) -lt $(( INTERVAL * 60 + 300 )) ]; then dot="${C_OK}●${C_RESET}"; status="online"
+    elif [ $((now - ${seen:-0})) -lt "$ONLINE_SECS" ]; then dot="${C_OK}●${C_RESET}"; status="online"
     else dot="${C_LINE}○${C_RESET}"; status="${C_MUTED}$(ago "${seen:-0}")${C_RESET}"; fi
     doc=$(val doctor "$f"); missing=$(echo "$doc" | awk '{print $2}'); hints=$(echo "$doc" | awk '{print $3}')
     if [ -z "$doc" ]; then doc="${C_MUTED}not checked${C_RESET}"
