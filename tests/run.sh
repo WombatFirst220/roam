@@ -156,6 +156,15 @@ t_placeholder_without_disk_blocks_is_caught_too() {
   check "park did not repair the pool copy" grep -q good "$pf"
 }
 
+t_binary_files_are_no_placeholders() {
+  mkdir -p "$(claude_dir A)/s1/tool-results"
+  printf '\377\330\377\340 jpeg' > "$(claude_dir A)/s1/tool-results/shot.jpg"      # not valid UTF-8
+  printf '%511s\303\244 rest' '' | tr ' ' x > "$(claude_dir A)/s2.jsonl"                 # ä cut at byte 512
+  LC_ALL=de_DE.UTF-8 on A park
+  check "binary file did not travel" [ -f "$T/pool/claude/App/s1/tool-results/shot.jpg" ] || return 1
+  check "transcript with a cut-off umlaut did not travel" [ -f "$T/pool/claude/App/s2.jsonl" ]
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

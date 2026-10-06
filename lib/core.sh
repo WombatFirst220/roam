@@ -285,7 +285,7 @@ claude_key() { printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g'; }
 # transcripts and memory files alike, in ~/.claude and in the pool. rsync would see nothing to do — or
 # worse, spread it over the good copy. Such a file may occupy no disk space at all, so only the content counts.
 is_placeholder() {  # $1 file: has a size, yet starts with nothing but NUL bytes
-  [ -s "$1" ] && [ -z "$(head -c 512 "$1" | tr -d '\000')" ]
+  [ -s "$1" ] && [ -z "$(head -c 512 "$1" | LC_ALL=C tr -d '\000')" ]   # C: binary data or a cut-off umlaut isn't an error
 }
 
 claude_sync() {  # $1 name, $2 project path, $3 up|down
