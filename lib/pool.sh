@@ -317,11 +317,13 @@ request_send() {  # $1 Mac, $2 project → the request id
 }
 
 requests_handle() {  # answer the other Macs' sync requests for this Mac (in the background run)
+  # until none is left: launchd doesn't start the run again for a request that arrives while it runs
   local f id from project time line name dir remote extra out tmp
-  for f in "$POOL/requests/$MAC"/*.req; do
-    [ -f "$f" ] || continue
+  while :; do
+    f=$(ls "$POOL/requests/$MAC"/*.req 2>/dev/null | head -1)
+    [ -f "$f" ] || break
     id=$(basename "$f" .req) from=$(val from "$f") project=$(val project "$f") time=$(val time "$f")
-    rm -f "$f"
+    rm -f "$f"; [ -f "$f" ] && { log "can't remove request $f"; break; }
     if [ $(( $(date +%s) - ${time:-0} )) -ge $REQUEST_TTL ]; then log "request from $from for $project expired — ignored"; continue; fi
     line=$(projects | awk -v n="$project" '$1 == n')
     [ -n "$line" ] || continue

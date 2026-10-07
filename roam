@@ -21,7 +21,7 @@
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.8.3
+ROAM_VERSION=1.8.4
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -175,7 +175,7 @@ case $CMD in
   resume)  need_pool; lock
            header "resume" "$(short_name "$(scutil --get ComputerName)")"; echo
            run_all resume; registry_write; finish_resume ;;
-  auto)    need_pool; lock; mkdir -p "$POOL/requests/$MAC" 2>/dev/null; requests_handle; run_all auto; doctor_if_due; registry_write ;;
+  auto)    need_pool; lock; mkdir -p "$POOL/requests/$MAC" 2>/dev/null; requests_handle; run_all auto; doctor_if_due; requests_handle; registry_write ;;
   doctor)  need_pool; header "doctor" "$(short_name "$(scutil --get ComputerName)")"
            if [ "$UI_FANCY" = 1 ]; then ( doctor_run ) & spin_while $! "${C_MUTED}checking this Mac…${C_RESET}"; else doctor_run; fi
            doctor_show; registry_write ;;

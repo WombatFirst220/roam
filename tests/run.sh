@@ -384,6 +384,21 @@ t_sync_brings_the_other_mac_along() {
   case $OUT in *"≡ in sync"*) ;; *) fail "status doesn't mark App as in sync"; return 1 ;; esac
 }
 
+
+t_a_request_that_arrives_during_the_run_is_answered_too() {
+  # launchd doesn't start the run again for a request that lands while it runs: the run itself looks again
+  local req="$P/requests/B" h="$T/B/dev/App/.git/hooks/reference-transaction"
+  mkdir -p "$req"
+  printf 'from=A\nproject=App\naction=sync\ntime=%s\n' "$(date +%s)" > "$req/1-A-first.req"
+  printf '#!/bin/sh\n[ -f "%s" ] || { touch "%s"; printf "from=A\\nproject=App\\naction=sync\\ntime=%%s\\n" "$(date +%%s)" > "%s/2-A-second.req"; }\nexit 0\n' \
+    "$T/hook.done" "$T/hook.done" "$req" > "$h"; chmod +x "$h"
+  echo "from B" > "$T/B/dev/App/a.txt"
+  on B auto
+  check "the hook didn't run — the test proves nothing" [ -f "$T/hook.done" ] || return 1
+  check "the first request wasn't answered" [ -f "$P/answers/A/1-A-first.ans" ] || return 1
+  check "the request that came during the run waits for the next one" [ -f "$P/answers/A/2-A-second.ans" ] || return 1
+  check "a request is left" not ls "$req"/*.req
+}
 t_sync_merges_work_from_both_macs() {
   on B status
   printf 'one\ntwo\nthree\n' > "$T/A/dev/App/b.txt"; ( cd "$T/A/dev/App" && git add b.txt && git -c user.name=t -c user.email=t@t commit -qm b && git push -q origin HEAD:main 2>/dev/null )
