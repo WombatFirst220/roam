@@ -486,14 +486,15 @@ EOF
     done
     case $(printf '%s' "$states" | sync_verdict) in
       sync) line="$line${C_OK}≡ in sync${C_RESET}" ;;
-      differs) line="$line${C_MUTED}≠ roam sync $name${C_RESET}" ;;
+      differs) line="$line${C_MUTED}≠ differs${C_RESET}" ;;
     esac
     box_line "$line"
   done <<EOF
 $(projects)
 EOF
   [ -n "$(projects)" ] || box_line "${C_MUTED}no projects yet — add one: roam add <git remote>${C_RESET}"
-  box_line "${C_LINE}✓ clean · ●n changed · +n new, never committed · ↑n unpushed · ☁ parked · — not cloned · ≡ the same on every Mac${C_RESET}"
+  box_line "${C_LINE}✓ clean · ●n changed · +n new · ↑n unpushed · ☁ parked · — not cloned${C_RESET}"
+  box_line "${C_LINE}≡ the same on every Mac · ≠ not yet: roam sync <project>${C_RESET}"
   box_bottom
 
   box_top "In flight" "work parked on the remote"
