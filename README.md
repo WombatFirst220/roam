@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.5.0                                                                               14:02
+ ◆ roam  v1.6.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -221,8 +221,9 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
   `main` might deploy, and that stays your call.
 - **Only what's in flight.** Once everything is committed and pushed, the snapshot disappears.
 - **Ancestry, not clocks.** `roam resume` only replaces local changes when they're safely parked
-  *and* the other Mac's snapshot builds on them. Worked on two Macs in parallel? roam takes
-  nothing over and shows you how to compare. No surprises, no lost work.
+  *and* the other Mac's snapshot builds on them. Worked on two Macs in parallel? roam merges both
+  sides the way git merges branches; where they collide you get the usual `<<<<<<<` markers, and
+  park waits until they're resolved. No surprises, no lost work.
 - **A way back.** Before resume changes a working directory, it keeps the state as
   `refs/roam-backup` (only in that repo, with a reflog). `roam undo` brings it back.
 - **Hands off.** roam leaves a project alone while a merge or rebase is running or git holds
@@ -231,6 +232,12 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
   resumes behind an open Xcode.
 - **Secrets stay home.** Untracked `*.pem`, `*.p12`, `*.p8`, `*.key`, `.env*`, `id_rsa` … block a
   snapshot until they're in `.gitignore`. Files over 50 MB too.
+- **…or travel encrypted, if you want.** With `carry_secrets = 1` ignored `.env*` files and the
+  `local=` files of a project go along, encrypted with [age](https://age-encryption.org): every Mac
+  has its own key in `~/.config/roam/age.key`, which never leaves it, and the pool only holds
+  `secrets/<project>/<Mac>.age`. Changed on both Macs? Yours stays, theirs lands next to it as
+  `.env.from-<Mac>`. Needs `brew install age` on every Mac. Anyone who can write to your pool
+  could add a key of their own, so keep the pool in an account only you use.
 - **Claude Code comes along.** Memory (and optionally session transcripts, for
   `claude --resume`) lives in `~/.claude/projects/<path>/`. roam mirrors it through the pool —
   which is why a project has to live at the same path on every Mac. A transcript or memory file your
@@ -277,7 +284,7 @@ and a failed push says why instead of blaming the network.
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)
 
 **`settings`** — `claude_sync`, `claude_history` (0 = memory only, no transcripts),
-`session_digest` (0/1/2, see above), `interval_min`, `max_file_mb`.
+`session_digest` (0/1/2, see above), `carry_secrets` (0/1, see above), `interval_min`, `max_file_mb`.
 
 Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
 

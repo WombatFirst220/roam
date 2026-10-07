@@ -26,7 +26,7 @@ project_state() {  # $1 path → branch, dirty, ahead, parked (tab separated) or
 }
 
 registry_write() {
-  local target="$MACS_DIR/$MAC.txt" tmp name dir remote extra f
+  local target="$MACS_DIR/$MAC.txt" tmp name dir remote extra f v
   mkdir -p "$MACS_DIR" || return
   rm -f "$MACS_DIR"/.$MAC.*.tmp   # leftovers of interrupted runs
   tmp="$MACS_DIR/.$MAC.$$.tmp"
@@ -38,6 +38,7 @@ registry_write() {
     echo "macos=$(sw_vers -productVersion)"
     echo "xcode=$(xcode_version)"
     echo "version=$ROAM_VERSION"
+    [ "$CARRY_SECRETS" = 1 ] && v=$(age_pub) && [ -n "$v" ] && echo "age=$v"   # public key: the others encrypt secrets for it
     echo "seen=$(date +%s)"
     if [ -f "$DOCTOR_FILE" ]; then
       echo "doctor=$(stat -f %m "$DOCTOR_FILE") $(grep -c '^missing' "$DOCTOR_FILE") $(grep -c '^hint' "$DOCTOR_FILE")"
@@ -146,6 +147,10 @@ run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a
   if [ "$CLAUDE_SYNC" = 1 ]; then
     with_timeout "$SYNC_TIMEOUT" claude_sync "$name" "$path" $way
     [ $? = 124 ] && report err "$name" "Claude Code files: the pool didn't answer within ${SYNC_TIMEOUT}s — make the pool folder available offline in your sync app"
+  fi
+  if [ "$CARRY_SECRETS" = 1 ]; then
+    with_timeout "$SYNC_TIMEOUT" secrets_sync "$name" $way
+    [ $? = 124 ] && report err "$name" "secrets: the pool didn't answer within ${SYNC_TIMEOUT}s — make the pool folder available offline in your sync app"
   fi
   # where this Mac's AI sessions stopped, for the other Macs — never worth failing a run over
   sess_digest_write "$name" "$path" 2>/dev/null || log "$name: session digest failed"

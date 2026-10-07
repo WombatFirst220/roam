@@ -109,6 +109,12 @@ park_project() {  # $1 name; cwd is the project
   head=$(git rev-parse -q --verify HEAD) || { report info "$name" "no commits yet — skipped"; return; }
   if in_the_middle; then report err "$name" "merge/rebase in progress — not parked"; return; fi
   git_busy "$name" "not parked" && return
+  # After a merge with conflicts: markers must not travel to the other Macs as if they were work
+  if [ -s "$g/roam-conflicts" ]; then
+    f=$(while IFS= read -r f; do [ -f "$f" ] && grep -q '^<<<<<<< ' "$f" 2>/dev/null && echo "$f"; done < "$g/roam-conflicts" | head -3 | tr '\n' ' ')
+    if [ -n "$f" ]; then report err "$name" "merge conflicts not resolved yet (${f% }) — not parked"; return; fi
+    rm -f "$g/roam-conflicts"
+  fi
 
   # Clean and fully pushed: nothing in flight. Remove an old snapshot, otherwise the other Macs
   # would keep seeing it as open work.
@@ -200,8 +206,25 @@ undo_cmd() {  # [project] — back to how the working directory was before the l
   fi
   git clean -q -fd && git read-tree -u --reset "$b" && git reset -q || { say_err "$P_NAME: couldn't restore the working directory"; return 1; }
   # no longer what was taken over: a park from here must not count as building on the other Mac's work
-  rm -f "$g/roam-applied"
+  rm -f "$g/roam-applied" "$g/roam-conflicts"
   say_ok "$P_NAME: back to $(git log -1 --format=%cr "$b") · $branch · $(git log -1 --format=%b "$b" | head -1)"
+}
+
+# ---------------------------------------------------------------- parallel edits
+# This side as a commit (like a snapshot: parents HEAD, our last snapshot, the one we took over), so the
+# merge base is the last state both Macs had — then the same three-way merge git does for branches.
+merge_parallel() {  # $1 foreign snapshot, $2 own snapshot, $3 applied → MERGED_TREE, MERGE_CONFLICTS (names)
+  local here parents base out p
+  parents="-p $(git rev-parse HEAD)"
+  for p in "$2" "$3"; do [ -n "$p" ] && git cat-file -e "$p" 2>/dev/null && parents="$parents -p $p"; done
+  here=$(echo "roam $MAC here" | git commit-tree "$(worktree_tree)" $parents) || return 1
+  base=$(git merge-base "$here" "$1") || return 1
+  # exit 1 = merged with conflicts (markers in the files), anything else = git couldn't
+  out=$(git merge-tree --write-tree --name-only --merge-base="$base" "$here" "$1" 2>/dev/null)
+  case $? in 0|1) ;; *) return 1 ;; esac
+  MERGED_TREE=$(printf '%s\n' "$out" | head -1)
+  MERGE_CONFLICTS=$(printf '%s\n' "$out" | awk 'NR > 1 && $0 == "" { exit } NR > 1')   # names end at the first blank line
+  [ -n "$MERGED_TREE" ]
 }
 
 # ---------------------------------------------------------------- resume
@@ -296,14 +319,16 @@ resume_project() {  # $1 name
   # Whatever happens next, the state before stays at hand: roam undo
   backup_here "before resuming from $from" || { report err "$name" "couldn't back up the working directory — nothing taken over"; return; }
   # 2. Local changes may only be dropped if they're safely parked and the snapshot builds on them.
-  #    Otherwise both Macs were edited in parallel.
+  #    Otherwise both Macs were edited in parallel: three-way merge, like git would.
+  MERGED_TREE="" MERGE_CONFLICTS=""
   if ! is_clean; then
     known=$(current_matches "$own" "$applied")
     if [ -z "$known" ] || ! git merge-base --is-ancestor "$known" "$sha"; then
-      report err "$name" "edited here and on $(mac_label "$from") in parallel — nothing taken over. 'roam park' saves this side; compare: git diff refs/remotes/roam/$from"
-      return
+      merge_parallel "$sha" "$own" "$applied" || {
+        report err "$name" "edited here and on $(mac_label "$from") in parallel, and git can't merge them — nothing taken over. 'roam park' saves this side; compare: git diff refs/remotes/roam/$from"
+        return; }
     fi
-    git reset -q --hard && git clean -q -fd   # unchanged copy lives in $known (also on the remote)
+    git reset -q --hard && git clean -q -fd   # this side lives in $known, or in the backup and the merge
   fi
 
   if [ "$branch" != "-" ]; then
@@ -321,8 +346,18 @@ resume_project() {  # $1 name
 
   # 3. Working directory = snapshot tree, index back to HEAD: changes show up as uncommitted again,
   #    new files as untracked (what was staged is not preserved).
-  git read-tree -u --reset "$sha" && git reset -q || { report err "$name" "couldn't restore the working directory"; return; }
+  git read-tree -u --reset "${MERGED_TREE:-$sha}" && git reset -q || { report err "$name" "couldn't restore the working directory"; return; }
   printf '%s\n' "$sha" > "$g/roam-applied"
+  if [ -n "$MERGED_TREE" ]; then
+    # Not dropping our snapshot: the next park replaces it with the merge, which builds on both sides
+    if [ -n "$MERGE_CONFLICTS" ]; then
+      printf '%s\n' "$MERGE_CONFLICTS" > "$g/roam-conflicts"
+      report err "$name" "edited here and on $(mac_label "$from") in parallel — merged, $(printf '%s\n' "$MERGE_CONFLICTS" | grep -c .) conflict(s): $(printf '%s\n' "$MERGE_CONFLICTS" | head -3 | tr '\n' ' ')— resolve the <<<<<<< markers, then roam park. Back: roam undo"
+    else
+      report ok "$name" "edited here and on $(mac_label "$from") in parallel — merged both · $branch · back: roam undo"
+    fi
+    return
+  fi
   # Our own snapshot is now contained in the one we took over — leaving it would offer it again later
   drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote: $(origin_why)"
   report ok "$name" "resumed from $(mac_label "$from") · $(ago "$time") · $branch · $(changes HEAD "$sha")"

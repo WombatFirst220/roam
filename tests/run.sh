@@ -41,6 +41,7 @@ second_remote() {  # $1 name → path of another bare remote with one commit
   echo "$T/$1.git"
 }
 
+have_age() { command -v age >/dev/null || [ -x /opt/homebrew/bin/age ]; }
 claude_dir() { echo "$T/$1/.claude/projects/$(printf '%s' "$T/$1/dev/App" | sed 's#[^A-Za-z0-9]#-#g')"; }
 
 # ---------------------------------------------------------------- assertions
@@ -75,7 +76,9 @@ t_parallel_edits_are_not_overwritten() {
   echo "from B" > "$T/B/dev/App/a.txt"
   on B resume
   check "resume should report the conflict" [ $RC != 0 ] || return 1
-  check "B's edit was overwritten" [ "$(cat "$T/B/dev/App/a.txt")" = "from B" ]
+  check "B's edit was overwritten" grep -qx "from B" "$T/B/dev/App/a.txt" || return 1   # inside the conflict markers
+  on B undo App
+  check "undo didn't bring back B's file" [ "$(cat "$T/B/dev/App/a.txt")" = "from B" ]
 }
 
 t_clean_and_pushed_drops_the_snapshot() {
@@ -212,7 +215,7 @@ t_park_skips_push_hooks() {
   printf '#!/bin/sh\nexit 1\n' > "$T/A/dev/App/.git/hooks/pre-push"; chmod +x "$T/A/dev/App/.git/hooks/pre-push"
   echo wip >> "$T/A/dev/App/a.txt"
   on A park
-  check "a pre-push hook blocked the park" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A
+  check "a pre-push hook blocked the park" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A >/dev/null
 }
 
 t_a_stale_index_lock_stops_park_and_resume() {
@@ -229,7 +232,7 @@ t_resume_keeps_a_backup_and_undo_restores_it() {
   echo "from A" > "$T/A/dev/App/a.txt"; echo "new on A" > "$T/A/dev/App/new.txt"; on A park
   on B resume
   check "resume did not take A's work" grep -q "from A" "$T/B/dev/App/a.txt" || return 1
-  check "no backup ref" git -C "$T/B/dev/App" rev-parse -q --verify refs/roam-backup || return 1
+  check "no backup ref" git -C "$T/B/dev/App" rev-parse -q --verify refs/roam-backup >/dev/null || return 1
   on B undo App
   check "undo failed" [ $RC = 0 ] || return 1
   check "undo left A's change" grep -qx hello "$T/B/dev/App/a.txt" || return 1
@@ -262,6 +265,75 @@ t_a_session_continued_on_two_macs_is_merged() {
   check "lines doubled" [ "$(grep -c '"n":1' "$T/pool/claude/App/s1.jsonl")" = 1 ] || return 1
   on A resume
   check "A didn't get B's line" grep -q '"b":3' "$(claude_dir A)/s1.jsonl"
+}
+
+t_parallel_edits_are_merged() {
+  printf 'one\ntwo\nthree\n' > "$T/A/dev/App/b.txt"; ( cd "$T/A/dev/App" && git add b.txt && git -c user.name=t -c user.email=t@t commit -qm b && git push -q origin HEAD:main 2>/dev/null )
+  on B resume
+  printf 'ONE\ntwo\nthree\n' > "$T/A/dev/App/b.txt"; on A park
+  printf 'one\ntwo\nTHREE\n' > "$T/B/dev/App/b.txt"; echo "B new" > "$T/B/dev/App/only-b.txt"
+  on B resume
+  check "resume failed" [ $RC = 0 ] || return 1
+  check "A's edit missing" grep -qx ONE "$T/B/dev/App/b.txt" || return 1
+  check "B's edit missing" grep -qx THREE "$T/B/dev/App/b.txt" || return 1
+  check "B's new file missing" [ -f "$T/B/dev/App/only-b.txt" ] || return 1
+  on B park
+  on A resume
+  check "the merge didn't reach A" grep -qx THREE "$T/A/dev/App/b.txt"
+}
+
+t_merge_conflicts_block_park_until_resolved() {
+  echo "A side" > "$T/A/dev/App/a.txt"; on A park
+  echo "B side" > "$T/B/dev/App/a.txt"
+  on B resume
+  case $OUT in *conflict*) ;; *) fail "no conflict reported"; return 1 ;; esac
+  check "no conflict markers" grep -q '^<<<<<<< ' "$T/B/dev/App/a.txt" || return 1
+  on B park
+  case $OUT in *"not resolved"*) ;; *) fail "park took the conflict markers along"; return 1 ;; esac
+  echo "both" > "$T/B/dev/App/a.txt"
+  on B park
+  check "park after resolving failed" [ $RC = 0 ] || return 1
+  on A resume
+  check "the resolution didn't reach A" grep -qx both "$T/A/dev/App/a.txt"
+}
+
+secrets_world() {  # carry_secrets on, .env ignored on both Macs
+  echo "carry_secrets = 1" >> "$T/pool/settings"
+  echo .env >> "$T/A/dev/App/.git/info/exclude"; echo .env >> "$T/B/dev/App/.git/info/exclude"
+}
+
+t_secrets_travel_encrypted() {
+  have_age || { ok; return; }
+  secrets_world
+  on B park                                   # B gets a key and publishes it
+  echo "KEY=one" > "$T/A/dev/App/.env"
+  on A park
+  check "no bundle in the pool" [ -f "$T/pool/secrets/App/A.age" ] || return 1
+  check "the bundle isn't encrypted" not grep -q "KEY=one" "$T/pool/secrets/App/A.age" || return 1
+  on B resume
+  check ".env didn't arrive on B" grep -qx "KEY=one" "$T/B/dev/App/.env" || return 1
+  echo "KEY=two" > "$T/A/dev/App/.env"; on A park
+  on B resume
+  check "an update didn't replace B's unchanged copy" grep -qx "KEY=two" "$T/B/dev/App/.env"
+}
+
+t_secrets_changed_on_both_macs_keep_yours() {
+  have_age || { ok; return; }
+  secrets_world
+  on B park
+  echo "KEY=one" > "$T/A/dev/App/.env"; on A park; on B resume
+  echo "KEY=A" > "$T/A/dev/App/.env"; on A park
+  echo "KEY=B" > "$T/B/dev/App/.env"
+  on B resume
+  check "B's own change was overwritten" grep -qx "KEY=B" "$T/B/dev/App/.env" || return 1
+  check "A's version isn't next to it" grep -qx "KEY=A" "$T/B/dev/App/.env.from-A" || return 1
+  case $OUT in *"changed here and on"*) ;; *) fail "conflict not reported"; return 1 ;; esac
+}
+
+t_secrets_stay_home_without_the_setting() {
+  echo .env >> "$T/A/dev/App/.git/info/exclude"; echo "KEY=one" > "$T/A/dev/App/.env"
+  on A park
+  check "secrets travelled although carry_secrets is off" [ ! -e "$T/pool/secrets" ]
 }
 
 t_scripts_are_bash32_clean() {

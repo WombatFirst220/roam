@@ -33,6 +33,9 @@ max_file_mb = 50
 # what each Mac tells the others about its AI sessions (Claude Code, Codex), for roam sessions:
 # 0 nothing · 1 titles, todos, changed files · 2 also the last prompt, reply and recap (secrets masked)
 session_digest = 2
+# carry ignored .env* files and the local=… files of projects.conf, encrypted with age — one key per
+# Mac, it never leaves the Mac (1/0). Needs age on every Mac: brew install age
+carry_secrets = 0
 EOF
 }
 
