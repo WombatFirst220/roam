@@ -16,6 +16,7 @@ new_pool() {  # $1 dir, $2 claude_sync, $3 claude_history, $4 interval
 #   name   folder (under your projects folder, same on every Mac)   git remote   [extras]
 # extras:  local=path1,path2   ignored files a project can't run without (e.g. Local.xcconfig)
 #          needs=cmd1,cmd2     extra command line tools
+#          secrets=1           ignored .env* and local= files travel, encrypted with age (key e in the app)
 # The folder must be identical on every Mac: Claude Code keys history and memory by path.
 # Easiest way to add one: roam add <git remote>
 EOF
@@ -34,7 +35,7 @@ max_file_mb = 50
 # 0 nothing · 1 titles, todos, changed files · 2 also the last prompt, reply and recap (secrets masked)
 session_digest = 2
 # carry ignored .env* files and the local=… files of projects.conf, encrypted with age — one key per
-# Mac, it never leaves the Mac (1/0). Needs age on every Mac: brew install age
+# Mac, it never leaves the Mac. 1 = every project; per project: key e in the app (secrets=1)
 carry_secrets = 0
 EOF
 }

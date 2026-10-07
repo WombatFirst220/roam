@@ -84,11 +84,13 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.6.0                                                                               14:02
+ ◆ roam  v1.7.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
 │   Backend        main ↑2                 ││ ☁ parked here · 2m ago · feature/login               │
+│                                          ││                                                      │
+│                                          ││ ⚿ secrets travel encrypted · e: off                  │
 │                                          ││                                                      │
 │                                          ││ AI sessions                                          │
 │                                          ││ ✻ Fix the login               this Mac · 2m ●        │
@@ -99,6 +101,11 @@ Just type `roam`:
 │                                          ││ Docs                                                 │
 │                                          ││ README.md · CLAUDE.md · CHANGELOG.md · docs/api.md   │
 ╰──────────────────────────────────────────╯╰──────────────────────────────────────────────────────╯
+╭─ Now ──────────────────────────────────────────────────────────────────────────── 3 in progress ─╮
+│ ● Mac mini        MyApp           ✻ Claude ● running   ●4 changed                                │
+│ ◐ MacBook Pro     Website         ◇ Codex · 1h ago                                               │
+│ ◐ MacBook Pro     Backend         ●2 changed                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Macs ──────────────────────────────────────────────────────────────── pool · iCloud Drive/roam ─╮
 │ ▸ Mac mini             this Mac     macOS 26.1   Xcode 26.1   ✓ ready                            │
 │ ● MacBook Pro          online       macOS 26.1   Xcode 26.1   ✗ 1 missing                        │
@@ -109,12 +116,17 @@ Just type `roam`:
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep. The app
 opens at once with what the pool knows and asks the remotes in the background.
 
+**Now** shows where work is going on at the moment, on every Mac: a running AI session (●), one from
+the last two hours or open changes on a Mac that is online (◐). It stays current by itself, every two
+minutes.
+
 - **⏎** opens a project: **Sessions** (where each AI session stopped, `⏎` reads it, `c` continues it),
   **Docs** (README, CLAUDE.md, … with a preview, `⏎` reads it, `o` opens your editor) and **Git**.
   `⇥` or `1`–`3` switch tabs, `esc` goes back.
 - **r** resume and **p** park right in the app: one row per project, a spinner while it runs, ✓ or ✗ with
   the details when it's done — and a progress bar, in the tab too where the terminal shows one (Ghostty,
   iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
+  **e** lets the selected project's secrets travel encrypted, or stops it (see below).
   **L** log, **u** refresh, **?** shows every key.
 - **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
 - The mouse works too: the wheel scrolls, a click selects, a click on the selected project opens it, a click
@@ -232,11 +244,12 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
   resumes behind an open Xcode.
 - **Secrets stay home.** Untracked `*.pem`, `*.p12`, `*.p8`, `*.key`, `.env*`, `id_rsa` … block a
   snapshot until they're in `.gitignore`. Files over 50 MB too.
-- **…or travel encrypted, if you want.** With `carry_secrets = 1` ignored `.env*` files and the
-  `local=` files of a project go along, encrypted with [age](https://age-encryption.org): every Mac
+- **…or travel encrypted, if you want.** Press **e** on a project in the app (it sets `secrets=1` in
+  `projects.conf`; `carry_secrets = 1` in the settings does it for all) and its ignored `.env*` files and
+  `local=` files go along, encrypted with [age](https://age-encryption.org): every Mac
   has its own key in `~/.config/roam/age.key`, which never leaves it, and the pool only holds
   `secrets/<project>/<Mac>.age`. Changed on both Macs? Yours stays, theirs lands next to it as
-  `.env.from-<Mac>`. Needs `brew install age` on every Mac. Anyone who can write to your pool
+  `.env.from-<Mac>`. Homebrew installs age along with roam. Anyone who can write to your pool
   could add a key of their own, so keep the pool in an account only you use.
 - **Claude Code comes along.** Memory (and optionally session transcripts, for
   `claude --resume`) lives in `~/.claude/projects/<path>/`. roam mirrors it through the pool —
@@ -282,9 +295,10 @@ and a failed push says why instead of blaming the network.
 
 - `local=a,b` — ignored files a project can't run without (missing → ✗)
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)
+- `secrets=1` — its ignored `.env*` and `local=` files travel encrypted (key **e** in the app)
 
 **`settings`** — `claude_sync`, `claude_history` (0 = memory only, no transcripts),
-`session_digest` (0/1/2, see above), `carry_secrets` (0/1, see above), `interval_min`, `max_file_mb`.
+`session_digest` (0/1/2, see above), `carry_secrets` (1 = every project's secrets travel, see above), `interval_min`, `max_file_mb`.
 
 Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
 

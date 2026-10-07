@@ -242,10 +242,12 @@ EOF
 tui_load() {  # projects and Macs from the pool's registry (fetch_everything rewrites this Mac's entry), work in flight from git
   local name dir remote extra f m i j k v l line sha time from br g applied now
   now=$(date +%s)
-  NP=0 P_N=() P_D=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() ST=()
+  NP=0 P_N=() P_D=() P_SEC=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
-    P_N[NP]=$name P_D[NP]=$dir; NP=$((NP + 1))
+    P_N[NP]=$name P_D[NP]=$dir P_SEC[NP]=0
+    { [ "$CARRY_SECRETS" = 1 ] || case " $extra " in *" secrets=1 "*) true ;; *) false ;; esac; } && P_SEC[NP]=1
+    NP=$((NP + 1))
   done <<EOF
 $(projects)
 EOF
@@ -262,7 +264,8 @@ EOF
       esac
     done < "$f"
     mname=${mname:-$m}; mname=${mname##*[’\']s }; mname=${mname%% von *}; mname=${mname%% de *}; mname=${mname%% of *}
-    M_LABEL[j]=$mname
+    M_LABEL[j]=$mname M_FRESH[j]=0
+    { [ "$m" = "$MAC" ] || [ $(( now - ${seen:-0} )) -lt "$ONLINE_SECS" ]; } && M_FRESH[j]=1
     local dot status d missing
     if [ "$m" = "$MAC" ]; then dot="${K_ACC}▸${K_R}"; status="${K_ACC}this Mac${K_R}"
     elif [ $(( now - ${seen:-0} )) -lt "$ONLINE_SECS" ]; then dot="${K_OK}●${K_R}"; status="${K_OK}online${K_R}"
@@ -302,6 +305,56 @@ EOF
     P_PV[i]=$line
   done
   [ "$SEL" -ge "$NP" ] && SEL=$((NP > 0 ? NP - 1 : 0))
+  now_build
+  return 0
+}
+
+# Where work is going on right now, across all Macs: a running or recent (2 h) AI session, or open
+# changes on a Mac that is online. One row per Mac and project — running sessions first, then newest.
+now_build() {
+  local i j k key m tool upd live dirty rest t line icon what rows=""
+  local _s _i _b _n _r
+  NOW=$(date +%s) W_T=() W_TOOL=() W_LIVE=() NOW_L=()
+  for ((i = 0; i < NP; i++)); do
+    read_lines "$TUI_DIR/s.$i" || continue
+    for ((k = 0; k < ${#LN[@]} && k < 12; k++)); do
+      IFS=$'\t' read -r m _s tool _i upd _b _n live _r <<EOF
+${LN[$k]}
+EOF
+      [ "$live" = 1 ] || [ $(( NOW - ${upd:-0} )) -lt 7200 ] || continue
+      for ((j = 0; j < NM; j++)); do [ "${M_ID[$j]}" = "$m" ] && break; done
+      [ $j -lt $NM ] || continue
+      key=$((j * NP + i))
+      [ -n "${W_T[$key]-}" ] && continue          # newest first: the first row per Mac counts
+      W_T[$key]=$upd W_TOOL[$key]=$tool W_LIVE[$key]=$live
+    done
+  done
+  for ((j = 0; j < NM; j++)); do
+    for ((i = 0; i < NP; i++)); do
+      key=$((j * NP + i))
+      IFS=$'\t' read -r _b dirty rest <<EOF
+${ST[$key]-}
+EOF
+      [ "${M_FRESH[$j]}" = 1 ] && [ "${dirty:-0}" -gt 0 ] 2>/dev/null || dirty=0
+      [ -n "${W_T[$key]-}" ] || [ "$dirty" -gt 0 ] || continue
+      if [ "${M_ID[$j]}" = "$MAC" ]; then tfit "${M_LABEL[$j]}" 14; tpad "${K_ACC}$FIT${K_R}" 16
+      else tfit "${M_LABEL[$j]}" 14; tpad "$FIT" 16; fi
+      line=$PAD; tfit "${P_N[$i]}" 14; tpad "${K_B}$FIT${K_R}" 16; line="$line$PAD"
+      what="" t=0
+      if [ -n "${W_T[$key]-}" ]; then
+        tui_icon "${W_TOOL[$key]}"; icon=$REPLY t=${W_T[$key]}
+        if [ "${W_LIVE[$key]}" = 1 ]; then what="$icon $(sess_name "${W_TOOL[$key]}") ${K_OK}● running${K_R}"; t=$((NOW + 1))
+        else tago "${W_T[$key]}"; what="$icon $(sess_name "${W_TOOL[$key]}") ${K_MUTED}· $REPLY ago${K_R}"; fi
+      fi
+      [ "$dirty" -gt 0 ] && what="$what${what:+   }${K_WARN}●$dirty${K_R} ${K_MUTED}changed${K_R}"
+      if [ "${W_LIVE[$key]-}" = 1 ]; then line="${K_OK}●${K_R} $line$what"; else line="${K_WARN}◐${K_R} $line$what"; fi
+      rows="$rows$t"$'\t'"$line"$'\n'
+    done
+  done
+  k=0
+  while IFS=$'\t' read -r t line; do [ -n "$line" ] && { NOW_L[k]=$line; k=$((k + 1)); }; done <<EOF
+$(printf '%s' "$rows" | sort -t$'\t' -k1,1nr)
+EOF
   return 0
 }
 
@@ -332,11 +385,19 @@ tui_refresh() {  # $1 "fetch": also ask the remotes (in the background)
   PV_KEY=""
 }
 
+tui_quiet_refresh() {  # registry and AI sessions again, in the background — no spinner, the old picture stays until then
+  rm -f "$TUI_DIR/sessions.done"
+  tui_load
+  ( tui_bg_sessions ) </dev/null >/dev/null 2>&1 &
+  TUI_JOBS="${TUI_JOBS:-} $!" QUIET_WAIT=1
+}
+
 tui_poll() {  # on every tick: pick up what the background jobs finished
+  if [ "${QUIET_WAIT:-0}" = 1 ] && [ -f "$TUI_DIR/sessions.done" ]; then QUIET_WAIT=0; now_build; PV_KEY=""; DIRTY=1; fi
   if [ -f "$TUI_DIR/fetch.done" ]; then
     rm -f "$TUI_DIR/fetch.done"; tui_load; PV_KEY=""; BUSY="reading AI sessions"; DIRTY=1
   fi
-  if [ -f "$TUI_DIR/sessions.done" ] && [ "$BUSY" = "reading AI sessions" ]; then BUSY=""; PV_KEY=""; DIRTY=1; fi
+  if [ -f "$TUI_DIR/sessions.done" ] && [ "$BUSY" = "reading AI sessions" ]; then BUSY=""; PV_KEY=""; now_build; DIRTY=1; fi
   # a view waiting for its data: draw again once it's there
   case $VIEW in
     run) DIRTY=1 ;;
@@ -364,13 +425,16 @@ read_lines() {  # $1 file → LN[] (no subshell)
 
 # ---------------------------------------------------------------- view: dashboard
 dash_preview() {  # PV[] for the selected project (cached until the selection or the data changes)
-  local key="$SEL:$COLS:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d)" w=$1 n=0 l i row
+  local key="$SEL:$COLS:${P_SEC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d)" w=$1 n=0 l i row
   [ "$key" = "$PV_KEY" ] && return
   PV_KEY=$key PV=()
   local IFS=$'\n'
   for l in ${P_PV[$SEL]-}; do PV[n]=$l; n=$((n + 1)); done
   unset IFS
   PV[n]=""; n=$((n + 1))
+  if [ "${P_SEC[$SEL]-0}" = 1 ]; then PV[n]="${K_OK}⚿${K_R} secrets travel encrypted ${K_MUTED}· e: off${K_R}"
+  else PV[n]="${K_MUTED}⚿ secrets stay on each Mac · e: travel encrypted${K_R}"; fi
+  n=$((n + 1)); PV[n]=""; n=$((n + 1))
   PV[n]="${K_B}AI sessions${K_R}"; n=$((n + 1))
   if read_lines "$TUI_DIR/s.$SEL"; then
     [ ${#LN[@]} -eq 0 ] && { PV[n]="${K_MUTED}none yet${K_R}"; n=$((n + 1)); }
@@ -391,7 +455,10 @@ dash_draw() {
   local lw rw ph mh i r top=1 sess
   local split=1; [ "$COLS" -lt 96 ] && split=0
   mh=$(( NM + 2 )); [ $mh -gt 7 ] && mh=7
-  ph=$(( ROWS - 2 - mh ))
+  local nh=$(( ${#NOW_L[@]} + 2 )) nmax=$(( (ROWS - 2 - mh) / 3 ))
+  [ $nmax -lt 5 ] && nmax=5; [ $nh -lt 3 ] && nh=3; [ $nh -gt $nmax ] && nh=$nmax
+  ph=$(( ROWS - 2 - mh - nh ))
+  [ $ph -lt 8 ] && { ph=$((ph + nh)); nh=0; }   # a small terminal: the projects come first
   if [ $split = 1 ]; then lw=$(( COLS * 44 / 100 )); rw=$(( COLS - lw )); else lw=$COLS; rw=0; fi
   # projects list (only those matching the filter)
   dash_visible
@@ -428,11 +495,20 @@ EOF
     panel $rw $ph "${P_N[$SEL]}" 0 "⏎ open"
     for ((i = 0; i < ph; i++)); do S[$((top + i))]="${S[$((top + i))]}${PB[$i]}"; done
   fi
+  # where work is going on right now
+  if [ $nh -gt 0 ]; then
+    PC=()
+    for ((i = 0; i < ${#NOW_L[@]} && i < nh - 2; i++)); do PC[$i]=${NOW_L[$i]}; done
+    [ ${#NOW_L[@]} -eq 0 ] && PC[0]="${K_MUTED}quiet — no open changes on an online Mac, no AI session in the last 2 hours${K_R}"
+    if [ ${#NOW_L[@]} -gt $((nh - 2)) ]; then panel $COLS $nh "Now" 0 "$((nh - 2)) of ${#NOW_L[@]} · s: sessions"
+    else panel $COLS $nh "Now" 0 "${#NOW_L[@]} in progress"; fi
+    for ((i = 0; i < nh; i++)); do S[$((top + ph + i))]=${PB[$i]}; done
+  fi
   # Macs
   PC=()
   for ((i = 0; i < NM && i < mh - 2; i++)); do PC[$i]=${M_LINE[$i]}; done
   panel $COLS $mh "Macs" 0 "pool · $(short_path "$POOL")"
-  for ((i = 0; i < mh; i++)); do S[$((top + ph + i))]=${PB[$i]}; done
+  for ((i = 0; i < mh; i++)); do S[$((top + ph + nh + i))]=${PB[$i]}; done
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
   if [ -n "$PROMPT" ]; then prompt_bar "filter"
@@ -498,8 +574,22 @@ dash_key() {
     L) log_open ;;
     u) tui_refresh fetch ;;
     c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
+    e) [ ${#VIDX[@]} -gt 0 ] && secrets_toggle ;;
     q|Q) QUIT=1 ;;
   esac
+}
+
+secrets_toggle() {  # the selected project's secrets: travel encrypted, or stay on each Mac
+  local n=${P_N[$SEL]}
+  if [ "$CARRY_SECRETS" = 1 ]; then toast "carry_secrets = 1 in the pool settings: every project's secrets travel"; return; fi
+  if [ "${P_SEC[$SEL]}" = 1 ]; then
+    pool_set_extra "$n" secrets "" && toast "$n: secrets stay on each Mac from now on (copies already made stay)"
+  else
+    have age || { toast "age is missing — brew upgrade roam installs it"; return; }
+    pool_set_extra "$n" secrets 1 && age_ensure_key &&
+      toast "$n: .env and local= files travel encrypted — from the next park on each Mac"
+  fi
+  tui_load; PV_KEY=""
 }
 
 dash_mouse() {  # wheel moves the selection; a click selects a project, a click on the selected one opens it
@@ -840,6 +930,7 @@ Dashboard
   s        AI sessions               v        docs
   c        continue newest session   d / f    doctor / fix
   n        new project               a / L    add a project / log
+  e        encrypted secrets on/off
 Reader
   space b  page down / up            / n N    search, next, previous
   ] [      next / previous heading   o        open in your editor"
@@ -890,7 +981,7 @@ tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|help: one frame on stdout, no te
   tui_palette; tui_size
   tui_load
   [ "$ROAM_TUI_SNAPSHOT" = load ] && { rm -rf "$TUI_DIR"; return; }
-  tui_bg_sessions
+  tui_bg_sessions; now_build
   VIEW=dash NOW=$(date +%s)
   case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; help) HELP_ON=1 ;;
     esac
@@ -937,6 +1028,7 @@ tui_main() {
       [ "$RESIZED" = 1 ] && { RESIZED=0; tui_size; UI_W=$((COLS - 2)); FULL=1; PV_KEY=""; PST_KEY=""; DIRTY=1; }
       [ "${TOAST_T:-0}" -gt 0 ] && { TOAST_T=$((TOAST_T - 1)); [ $TOAST_T = 0 ] && FULL=1; DIRTY=1; }
       [ $((TICKS % 150)) = 0 ] && DIRTY=1   # the clock and "n min ago", every 30 s
+      [ $((TICKS % 600)) = 0 ] && [ "$VIEW" = dash ] && [ -z "$BUSY" ] && tui_quiet_refresh   # "Now" stays current
       tui_poll
       [ "$DIRTY" = 0 ] && [ -n "$BUSY" ] && [ "$VIEW" = dash ] && tui_tick_status
       continue

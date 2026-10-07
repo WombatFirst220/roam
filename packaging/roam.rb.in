@@ -8,6 +8,7 @@ class Roam < Formula
   license "MIT"
 
   depends_on :macos
+  depends_on "age"   # secrets travel encrypted (roam: key e) — installed and upgraded along with roam
 
   def install
     libexec.install "roam", "lib"

@@ -107,8 +107,8 @@ check_mac() {
     v=$(claude --version 2>/dev/null | awk '{print $1}'); res ok "This Mac" "Claude Code $v"
   else res hint "This Mac" "Claude Code" "" "https://claude.com/claude-code"; fi
   have jq && res ok "This Mac" "jq (AI session details)" || res hint "This Mac" "jq — roam sessions shows only titles without it" "brew install jq"
-  if [ "$CARRY_SECRETS" = 1 ]; then
-    have age && res ok "This Mac" "age (secrets travel encrypted)" || res missing "This Mac" "age — carry_secrets is on, secrets can't travel without it" "brew install age"
+  if secrets_anywhere; then
+    have age && res ok "This Mac" "age (secrets travel encrypted)" || res missing "This Mac" "age — secrets can't travel without it" "brew install age"
   fi
 }
 

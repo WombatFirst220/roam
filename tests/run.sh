@@ -336,6 +336,32 @@ t_secrets_stay_home_without_the_setting() {
   check "secrets travelled although carry_secrets is off" [ ! -e "$T/pool/secrets" ]
 }
 
+t_secrets_switched_on_per_project() {
+  have_age || { ok; return; }
+  echo .env >> "$T/A/dev/App/.git/info/exclude"; echo .env >> "$T/B/dev/App/.git/info/exclude"
+  sed -i '' 's#^\(App .*\)$#\1 secrets=1#' "$T/pool/projects.conf"
+  on B park
+  echo "KEY=one" > "$T/A/dev/App/.env"; on A park; on B resume
+  check ".env didn't travel with secrets=1" grep -qx "KEY=one" "$T/B/dev/App/.env" || return 1
+  check "projects.conf lost its line" grep -q "secrets=1" "$T/pool/projects.conf"
+}
+
+t_pool_set_extra_keeps_the_other_extras() {
+  sed -i '' 's#^\(App .*\)$#\1 local=Local.xcconfig#' "$T/pool/projects.conf"
+  ( POOL="$T/pool" PROJECTS_CONF="$T/pool/projects.conf"; . "$ROOT/lib/secrets.sh"
+    pool_set_extra App secrets 1; pool_set_extra App secrets 1; pool_set_extra App secrets "" ; pool_set_extra App secrets 1 )
+  check "secrets=1 not set exactly once" [ "$(grep -o 'secrets=1' "$T/pool/projects.conf" | wc -l | tr -d ' ')" = 1 ] || return 1
+  check "local= got lost" grep -q 'local=Local.xcconfig' "$T/pool/projects.conf"
+}
+
+t_app_shows_where_work_is_going_on() {
+  echo "wip" >> "$T/A/dev/App/a.txt"; on A park           # writes A's status with the open change
+  OUT=$(HOME="$T/A" ROAM_POOL="$T/pool" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+    ROAM_TUI_SNAPSHOT=dash ROAM_COLS=100 ROAM_ROWS=30 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+  case $OUT in *"Now"*) ;; *) fail "no Now panel"; return 1 ;; esac
+  printf '%s\n' "$OUT" | grep -q -E '◐ .+ +App +●1 changed' || { fail "A's open change in App isn't listed"; return 1; }
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

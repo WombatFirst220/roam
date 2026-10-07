@@ -1,7 +1,8 @@
 # roam — secrets: ignored files a project can't run without travel encrypted through the pool.
 #
 # What travels: ignored .env* files (not .example/.sample/.template) and the local=… files of
-# projects.conf, each at most 1 MB. Only with carry_secrets = 1 in the pool settings, and only with age.
+# projects.conf, each at most 1 MB. Switched on per project (secrets=1 in projects.conf, key e in the
+# app) or for all of them (carry_secrets = 1 in the pool settings). Needs age — the formula brings it.
 # Each Mac has its own key (~/.config/roam/age.key, it never leaves the Mac) and publishes the public
 # half as age= in its status file. Every Mac packs its copy for all the keys it knows into
 # secrets/<project>/<Mac>.age — one writer per file, so the sync app never has two versions to reconcile.
@@ -20,6 +21,22 @@ age_ensure_key() {
 age_recipients() {  # every key the Macs in the pool published, and this Mac's own
   { age_pub; for f in $(mac_files); do val age "$f"; done; } | grep '^age1' | sort -u
 }
+secrets_on() {  # $1 project name: do its secrets travel?
+  [ "$CARRY_SECRETS" = 1 ] && return 0
+  projects | awk -v n="$1" '$1 == n { for (i = 4; i <= NF; i++) if ($i == "secrets=1") f = 1 } END { exit !f }'
+}
+secrets_anywhere() { [ "$CARRY_SECRETS" = 1 ] || projects | grep -q -E '(^|[[:space:]])secrets=1([[:space:]]|$)'; }
+
+pool_set_extra() {  # $1 project, $2 key, $3 value (empty: remove) — rewrites that one line of projects.conf
+  local tmp="$PROJECTS_CONF.$$.tmp"
+  awk -v n="$1" -v k="$2=" -v v="$3" '
+    /^[[:space:]]*(#|$)/ || $1 != n { print; next }
+    { extra = ""; for (i = 4; i <= NF; i++) if (index($i, k) != 1) extra = extra " " $i
+      if (v != "") extra = extra " " k v
+      printf "%-12s %-12s %s%s\n", $1, $2, $3, extra }
+  ' "$PROJECTS_CONF" > "$tmp" && mv "$tmp" "$PROJECTS_CONF"
+}
+
 sha_of() { shasum -a 256 < "$1" | cut -c1-64; }
 
 secret_files() {  # $1 project name; cwd is the project → relative paths that travel
