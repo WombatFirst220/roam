@@ -242,7 +242,7 @@ EOF
 tui_load() {  # projects and Macs from the pool's registry (fetch_everything rewrites this Mac's entry), work in flight from git
   local name dir remote extra f m i j k v l line sha time from br g applied now
   now=$(date +%s)
-  NP=0 P_N=() P_D=() P_SEC=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
+  NP=0 P_N=() P_D=() P_SEC=() P_SYNC=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
     P_N[NP]=$name P_D[NP]=$dir P_SEC[NP]=0
@@ -253,6 +253,7 @@ $(projects)
 EOF
   for f in "$MACS_DIR"/*.txt; do
     [ -f "$f" ] || continue
+    case $f in *_blacklisted_*|*conflict*) continue ;; esac   # kDrive's set-aside copies, not Macs
     m=${f##*/}; m=${m%.txt}; j=$NM; M_ID[j]=$m; NM=$((NM + 1))
     local seen="" mname="" macos="" xcode="" doc=""
     while IFS= read -r l; do
@@ -277,6 +278,20 @@ EOF
     tfit "$mname" 20; tpad "${K_B}$FIT${K_R}" 21; v=$PAD
     tpad "$status" 13
     M_LINE[j]="$dot $v$PAD${K_MUTED}macOS ${macos:-–}   Xcode ${xcode:-–}${K_R}   $d"
+  done
+  # in sync: the same branch, commit and working tree on every Mac that has the project (see sync_verdict)
+  local b h t first n diff unk _d _a _p
+  for ((i = 0; i < NP; i++)); do
+    first="" n=0 diff=0 unk=0
+    for ((j = 0; j < NM; j++)); do
+      IFS=$'\t' read -r b _d _a _p h t <<EOF
+${ST[$((j * NP + i))]-}
+EOF
+      { [ -z "$b" ] || [ "$b" = missing ]; } && continue
+      { [ -z "$t" ] || [ "$t" = - ]; } && { unk=1; continue; }
+      n=$((n + 1)); [ $n = 1 ] && first="$b $h $t"; [ "$b $h $t" != "$first" ] && diff=1
+    done
+    P_SYNC[i]=""; [ $diff = 1 ] && P_SYNC[i]=differs; [ $diff = 0 ] && [ $unk = 0 ] && [ $n -ge 2 ] && P_SYNC[i]=sync
   done
   for ((i = 0; i < NP; i++)); do
     line="" P_CELL[i]="${K_MUTED}?${K_R}"
@@ -425,9 +440,13 @@ read_lines() {  # $1 file → LN[] (no subshell)
 
 # ---------------------------------------------------------------- view: dashboard
 dash_preview() {  # PV[] for the selected project (cached until the selection or the data changes)
-  local key="$SEL:$COLS:${P_SEC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d)" w=$1 n=0 l i row
+  local key="$SEL:$COLS:${P_SEC[$SEL]-}:${P_SYNC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d)" w=$1 n=0 l i row
   [ "$key" = "$PV_KEY" ] && return
   PV_KEY=$key PV=()
+  case ${P_SYNC[$SEL]-} in
+    sync) PV[n]="${K_OK}≡ in sync${K_R} ${K_MUTED}· the same on every Mac${K_R}"; n=$((n + 1)) ;;
+    differs) PV[n]="${K_WARN}≠ not in sync${K_R} ${K_MUTED}· y brings every Mac to the same state${K_R}"; n=$((n + 1)) ;;
+  esac
   local IFS=$'\n'
   for l in ${P_PV[$SEL]-}; do PV[n]=$l; n=$((n + 1)); done
   unset IFS
@@ -471,6 +490,7 @@ dash_draw() {
     r=${VIDX[$((i + off))]}
     tfit "${P_N[$r]}" 14; tpad "${K_B}$FIT${K_R}" 15
     local c="$PAD${P_CELL[$r]}"
+    [ "${P_SYNC[$r]-}" = sync ] && c="$c ${K_OK}≡${K_R}"
     if [ -f "$TUI_DIR/s.$r" ] && read_lines "$TUI_DIR/s.$r" && [ ${#LN[@]} -gt 0 ]; then
       local _m _s tool _i upd _b _n live _rest icon
       IFS=$'\t' read -r _m _s tool _i upd _b _n live _rest <<EOF
@@ -512,7 +532,7 @@ EOF
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
   if [ -n "$PROMPT" ]; then prompt_bar "filter"
-  else statusbar "ROAM" "⏎:open /:filter r:resume p:park s:sessions v:docs d:doctor ?:help q:quit" "$right"; fi
+  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs d:doctor ?:help q:quit" "$right"; fi
 }
 
 dash_visible() {  # VIDX[] = projects whose name matches FILTER (letters in order, any case); keeps SEL on one of them
@@ -575,6 +595,7 @@ dash_key() {
     u) tui_refresh fetch ;;
     c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
     e) [ ${#VIDX[@]} -gt 0 ] && secrets_toggle ;;
+    y) [ ${#VIDX[@]} -gt 0 ] && { tui_outside "Sync ${P_N[$SEL]}" "sync_cmd '${P_N[$SEL]}'"; tui_refresh; } ;;
     q|Q) QUIT=1 ;;
   esac
 }
@@ -930,7 +951,7 @@ Dashboard
   s        AI sessions               v        docs
   c        continue newest session   d / f    doctor / fix
   n        new project               a / L    add a project / log
-  e        encrypted secrets on/off
+  y        sync this project         e        encrypted secrets on/off
 Reader
   space b  page down / up            / n N    search, next, previous
   ] [      next / previous heading   o        open in your editor"

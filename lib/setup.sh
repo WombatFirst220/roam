@@ -109,6 +109,14 @@ git_access() {  # $1 remote: check it; for SSH remotes offer to set up a key
   return 1
 }
 
+agent_refresh() {  # an agent from before 1.8 doesn't watch the requests folder: renew it — only from the copy it runs
+  [ -f "$AGENT_PLIST" ] && [ -n "$POOL" ] || return 0
+  grep -q "<string>$POOL/requests/$MAC</string>" "$AGENT_PLIST" && return 0
+  grep -q "<string>$(roam_command)</string>" "$AGENT_PLIST" || return 0
+  mkdir -p "$POOL/requests/$MAC" 2>/dev/null
+  install_agent >/dev/null 2>&1 && log "LaunchAgent renewed: it watches the requests folder"
+}
+
 install_agent() {
   local cmd
   cmd=$(roam_command)
@@ -141,6 +149,10 @@ install_agent() {
     </array>
     <key>StartInterval</key>
     <integer>$((INTERVAL * 60))</integer>
+    <key>WatchPaths</key>
+    <array>
+        <string>$POOL/requests/$MAC</string>
+    </array>
     <key>RunAtLoad</key>
     <true/>
     <key>ProcessType</key>

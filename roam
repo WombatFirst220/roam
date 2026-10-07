@@ -13,13 +13,14 @@
 #   roam sessions [project]    AI sessions (Claude, Codex, Gemini, Copilot, opencode) on every Mac
 #   roam session <project> [n] read a session      roam continue <project> [n]  pick it up again
 #   roam read [project] [file] the project's README, CLAUDE.md, docs … in the reader
+#   roam sync [project]        one project in the same state on every Mac (asks the other Macs too)
 #   roam undo [project]        back to how it was before the last resume (undo works twice, too)
 #   roam leave        take this Mac out of the pool
 #   roam auto         background run (LaunchAgent): park, report, never touch your files
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.7.0
+ROAM_VERSION=1.8.0
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -117,7 +118,7 @@ if [ -z "$(git config --global user.name 2>/dev/null)" ]; then
 fi
 
 log() { mkdir -p "$(dirname "$LOG")"; printf '[%s] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${CMD:-ui}" "$*" >> "$LOG"; }
-notify() { log "notify: $*"; osascript -e "display notification \"$(printf '%s' "$*" | tr '"' "'")\" with title \"roam\"" 2>/dev/null; }
+notify() { log "notify: $*"; [ -n "${ROAM_NO_NOTIFY:-}" ] && return 0; osascript -e "display notification \"$(printf '%s' "$*" | tr '"' "'")\" with title \"roam\"" 2>/dev/null; }
 ago() {  # unix time → "5 min ago"
   local s=$(( $(date +%s) - $1 ))
   if [ $s -lt 120 ]; then echo "just now"
@@ -147,7 +148,7 @@ lock() {
 usage() {
   header "v$ROAM_VERSION" ""
   printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
-  sed -n '4,18p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  sed -n '4,19p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
 
@@ -156,6 +157,7 @@ if [ "$MAC_IS_NEW" = 1 ] && [ -f "$CONFIG" ] && [ -z "${ROAM_MAC:-}" ]; then
   printf 'mac_id = %s\n' "$MAC" >> "$CONFIG"
 fi
 case $CMD in ""|status|park|resume|auto) [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && adopt_identity ;; esac
+case $CMD in ""|status|park|resume|sync|doctor) agent_refresh ;; esac
 
 ERRORS=0
 case $CMD in
@@ -172,7 +174,7 @@ case $CMD in
   resume)  need_pool; lock
            header "resume" "$(short_name "$(scutil --get ComputerName)")"; echo
            run_all resume; registry_write; finish_resume ;;
-  auto)    need_pool; lock; run_all auto; doctor_if_due; registry_write ;;
+  auto)    need_pool; lock; mkdir -p "$POOL/requests/$MAC" 2>/dev/null; requests_handle; run_all auto; doctor_if_due; registry_write ;;
   doctor)  need_pool; header "doctor" "$(short_name "$(scutil --get ComputerName)")"
            if [ "$UI_FANCY" = 1 ]; then ( doctor_run ) & spin_while $! "${C_MUTED}checking this Mac…${C_RESET}"; else doctor_run; fi
            doctor_show; registry_write ;;
@@ -187,6 +189,7 @@ case $CMD in
   continue) need_pool; continue_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
   read)    need_pool; read_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
   undo)    need_pool; undo_cmd "${2:-}" || ERRORS=1 ;;
+  sync)    need_pool; sync_cmd "${2:-}" || ERRORS=1 ;;
   version|--version|-v) echo "roam $ROAM_VERSION" ;;
   help|-h|--help) usage ;;
   *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;

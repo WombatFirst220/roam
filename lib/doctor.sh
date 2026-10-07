@@ -54,11 +54,11 @@ https_remote() {  # git@github.com:a/b.git → https://github.com/a/b.git; anyth
 }
 
 pool_set_remote() {  # $1 project name, $2 new remote — rewrites that one line of projects.conf, atomically
-  local tmp="$PROJECTS_CONF.$$.tmp"
+  local tmp; tmp=$(mktemp)
   awk -v n="$1" -v r="$2" '
     /^[[:space:]]*(#|$)/ || $1 != n { print; next }
     { extra = ""; for (i = 4; i <= NF; i++) extra = extra " " $i; printf "%-12s %-12s %s%s\n", $1, $2, r, extra }
-  ' "$PROJECTS_CONF" > "$tmp" && mv "$tmp" "$PROJECTS_CONF"
+  ' "$PROJECTS_CONF" > "$tmp" && pool_put "$tmp" "$PROJECTS_CONF"
 }
 
 pool_prefer_ssh() {  # HTTPS addresses in the pool become SSH (see ssh_remote); clones fall back to HTTPS anyway

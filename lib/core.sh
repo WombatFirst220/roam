@@ -390,10 +390,10 @@ transcript_meet() {  # $1 src, $2 dst, $3 project, $4 relative path
   if is_prefix "$2" "$1"; then cp -p "$1" "$2"; return; fi
   # Merge complete files only: one that is being written right now waits for the next run.
   [ -z "$(tail -c 1 "$1" | tr -d '\n')" ] && [ -z "$(tail -c 1 "$2" | tr -d '\n')" ] || return 0
-  m="$2.roam-merge"
+  m=$(mktemp)
   LC_ALL=C awk '!seen[$0]++' "$2" "$1" > "$m" || { rm -f "$m"; return 1; }
   if cmp -s "$m" "$2"; then rm -f "$m"
-  else mv "$m" "$2" && log "$3: merged $4 — the session went on on two Macs"; fi
+  else pool_put "$m" "$2" && log "$3: merged $4 — the session went on on two Macs"; fi
 }
 
 claude_sync() {  # $1 name, $2 project path, $3 up|down

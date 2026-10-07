@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.7.0                                                                               14:02
+ ◆ roam  v1.8.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -116,6 +116,13 @@ Just type `roam`:
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep. The app
 opens at once with what the pool knows and asks the remotes in the background.
 
+**≡** next to a project means *in sync*: every Mac has the same branch, commit and working tree,
+uncommitted and untracked files included. **y** (or `roam sync MyApp`) gets it there: this Mac parks,
+every other Mac that is online gets a request through the pool — it parks, resumes (merging if both
+sides changed) and answers — and this Mac takes over the result. A Mac picks a request up at once, as
+launchd watches the pool's `requests/<Mac>` folder (otherwise within the auto-park interval); requests
+older than 30 minutes are dropped, and a Mac that synced on request shows a notification.
+
 **Now** shows where work is going on at the moment, on every Mac: a running AI session (●), one from
 the last two hours or open changes on a Mac that is online (◐). It stays current by itself, every two
 minutes.
@@ -126,6 +133,7 @@ minutes.
 - **r** resume and **p** park right in the app: one row per project, a spinner while it runs, ✓ or ✗ with
   the details when it's done — and a progress bar, in the tab too where the terminal shows one (Ghostty,
   iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
+  **y** syncs the selected project on every Mac (see above).
   **e** lets the selected project's secrets travel encrypted, or stops it (see below).
   **L** log, **u** refresh, **?** shows every key.
 - **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
@@ -203,6 +211,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam read [project] [file]` | the project's Markdown files in the reader |
 | `roam status` | the dashboard without the menu |
 | `roam setup` | set up or repair this Mac |
+| `roam sync [project]` | one project in the same state on every Mac: parks it here, asks the other Macs to sync it, takes what they had |
 | `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
 | `roam leave` | take this Mac out of the pool |
 
@@ -240,8 +249,9 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
   `refs/roam-backup` (only in that repo, with a reflog). `roam undo` brings it back.
 - **Hands off.** roam leaves a project alone while a merge or rebase is running or git holds
   `.git/index.lock`, and it pushes its own refs without your git hooks (`--no-verify`).
-- **Auto-park never touches your files.** The background job only parks and reports — it never
-  resumes behind an open Xcode.
+- **Auto-park never touches your files on its own.** The background job only parks and reports — it
+  resumes only when you ask for it from another Mac with `roam sync`, then with a backup (`roam undo`)
+  and a notification.
 - **Secrets stay home.** Untracked `*.pem`, `*.p12`, `*.p8`, `*.key`, `.env*`, `id_rsa` … block a
   snapshot until they're in `.gitignore`. Files over 50 MB too.
 - **…or travel encrypted, if you want.** Press **e** on a project in the app (it sets `secrets=1` in

@@ -28,13 +28,13 @@ secrets_on() {  # $1 project name: do its secrets travel?
 secrets_anywhere() { [ "$CARRY_SECRETS" = 1 ] || projects | grep -q -E '(^|[[:space:]])secrets=1([[:space:]]|$)'; }
 
 pool_set_extra() {  # $1 project, $2 key, $3 value (empty: remove) — rewrites that one line of projects.conf
-  local tmp="$PROJECTS_CONF.$$.tmp"
+  local tmp; tmp=$(mktemp)
   awk -v n="$1" -v k="$2=" -v v="$3" '
     /^[[:space:]]*(#|$)/ || $1 != n { print; next }
     { extra = ""; for (i = 4; i <= NF; i++) if (index($i, k) != 1) extra = extra " " $i
       if (v != "") extra = extra " " k v
       printf "%-12s %-12s %s%s\n", $1, $2, $3, extra }
-  ' "$PROJECTS_CONF" > "$tmp" && mv "$tmp" "$PROJECTS_CONF"
+  ' "$PROJECTS_CONF" > "$tmp" && pool_put "$tmp" "$PROJECTS_CONF"
 }
 
 sha_of() { shasum -a 256 < "$1" | cut -c1-64; }
@@ -62,7 +62,7 @@ secrets_sync() {  # $1 name, $2 up|down; cwd is the project
 }
 
 secrets_up() {  # $1 name
-  local name=$1 g files dir out rec stamp f
+  local name=$1 g files dir out rec stamp f enc
   g=$(git rev-parse --git-dir)
   files=$(secret_files "$name")
   dir="$POOL/secrets/$name" out="$POOL/secrets/$name/$MAC.age"
@@ -73,14 +73,15 @@ secrets_up() {  # $1 name
   stamp=$( { cat "$rec"; printf '%s\n' "$files" | while IFS= read -r f; do printf '%s %s\n' "$(sha_of "$f")" "$f"; done; } | shasum -a 256 | cut -c1-64)
   if [ -f "$out" ] && [ "$(cat "$g/roam-secrets-stamp" 2>/dev/null)" = "$stamp" ]; then rm -f "$rec"; return 0; fi
   mkdir -p "$dir" || { rm -f "$rec"; return 1; }
-  if printf '%s\n' "$files" | tar -cf - -T - 2>/dev/null | age -e -R "$rec" -o "$out.tmp" 2>/dev/null; then
-    mv "$out.tmp" "$out"
+  enc=$(mktemp)
+  if printf '%s\n' "$files" | tar -cf - -T - 2>/dev/null | age -e -R "$rec" -o "$enc" 2>/dev/null; then
+    pool_put "$enc" "$out"
     printf '%s\n' "$stamp" > "$g/roam-secrets-stamp"
     # what's shared now is the common state: a later change on another Mac may replace it here
     printf '%s\n' "$files" | while IFS= read -r f; do seen_set "$g/roam-secrets-seen" "$f" "$(sha_of "$f")"; done
     log "$name: secrets packed for $(grep -c . "$rec") Mac key(s): $(printf '%s\n' "$files" | tr '\n' ' ')"
   else
-    rm -f "$out.tmp"; report err "$name" "couldn't encrypt the secrets for the pool"
+    rm -f "$enc"; report err "$name" "couldn't encrypt the secrets for the pool"
   fi
   rm -f "$rec"
 }

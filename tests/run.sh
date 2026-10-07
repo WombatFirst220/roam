@@ -30,7 +30,7 @@ fresh() {  # a new world: remote with one commit, pool with one project "App", M
 on() {  # $1 Mac, rest: roam arguments — runs roam as that Mac, output in $OUT, exit status in $RC
   local m=$1; shift
   OUT=$(HOME="$T/$m" ROAM_POOL="$T/pool" ROAM_PROJECTS_DIR="$T/$m/dev" ROAM_MAC="$m" ROAM_HOSTNAME="$m" \
-    ROAM_LOCK="$T/$m.lock" ROAM_LOG="$T/$m.log" NO_COLOR=1 "$ROOT/roam" "$@" 2>&1 </dev/null)
+    ROAM_LOCK="$T/$m.lock" ROAM_LOG="$T/$m.log" ROAM_NO_NOTIFY=1 NO_COLOR=1 "$ROOT/roam" "$@" 2>&1 </dev/null)
   RC=$?
 }
 
@@ -196,19 +196,18 @@ t_doctor_warns_about_online_only_pool_files() {
 }
 
 t_status_file_is_only_rewritten_when_something_changed() {
-  local f="$T/pool/macs/A.txt" ino
+  local f="$T/pool/macs/A.txt" seen
   on A park
   check "no status file" [ -f "$f" ] || return 1
-  ino=$(stat -f %i "$f")
+  sed -i '' 's/^seen=\([0-9]*\)$/seen=\1/' "$f"; seen=$(grep '^seen=' "$f")
+  sleep 1; on A park
+  check "unchanged status was rewritten" [ "$(grep '^seen=' "$f")" = "$seen" ] || return 1
+  sed -i '' 's/^seen=.*/seen=1/' "$f"                              # heartbeat long overdue
   on A park
-  check "unchanged status was rewritten" [ "$(stat -f %i "$f")" = "$ino" ] || return 1
-  sed -i '' 's/^seen=.*/seen=1/' "$f"; ino=$(stat -f %i "$f")      # heartbeat long overdue
-  on A park
-  check "overdue heartbeat was not refreshed" [ "$(stat -f %i "$f")" != "$ino" ] || return 1
-  ino=$(stat -f %i "$f")
+  check "overdue heartbeat was not refreshed" not grep -qx 'seen=1' "$f" || return 1
   echo change >> "$T/A/dev/App/a.txt"
   on A park
-  check "a changed project did not update the status" [ "$(stat -f %i "$f")" != "$ino" ]
+  check "a changed project did not update the status" grep -q "^project=App	main	1	" "$f"
 }
 
 t_park_skips_push_hooks() {
@@ -348,7 +347,7 @@ t_secrets_switched_on_per_project() {
 
 t_pool_set_extra_keeps_the_other_extras() {
   sed -i '' 's#^\(App .*\)$#\1 local=Local.xcconfig#' "$T/pool/projects.conf"
-  ( POOL="$T/pool" PROJECTS_CONF="$T/pool/projects.conf"; . "$ROOT/lib/secrets.sh"
+  ( POOL="$T/pool" PROJECTS_CONF="$T/pool/projects.conf"; . "$ROOT/lib/pool.sh"; . "$ROOT/lib/secrets.sh"
     pool_set_extra App secrets 1; pool_set_extra App secrets 1; pool_set_extra App secrets "" ; pool_set_extra App secrets 1 )
   check "secrets=1 not set exactly once" [ "$(grep -o 'secrets=1' "$T/pool/projects.conf" | wc -l | tr -d ' ')" = 1 ] || return 1
   check "local= got lost" grep -q 'local=Local.xcconfig' "$T/pool/projects.conf"
@@ -360,6 +359,59 @@ t_app_shows_where_work_is_going_on() {
     ROAM_TUI_SNAPSHOT=dash ROAM_COLS=100 ROAM_ROWS=30 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
   case $OUT in *"Now"*) ;; *) fail "no Now panel"; return 1 ;; esac
   printf '%s\n' "$OUT" | grep -q -E '◐ .+ +App +●1 changed' || { fail "A's open change in App isn't listed"; return 1; }
+}
+
+answer_requests() {  # $1 Mac: plays its background run as soon as a request for it lands in the pool
+  local i
+  for i in $(seq 1 40); do
+    ls "$T/pool/requests/$1"/*.req >/dev/null 2>&1 && { on "$1" auto; return; }
+    sleep 0.5
+  done
+}
+
+t_sync_brings_the_other_mac_along() {
+  on B status                                         # B announces itself: online, roam 1.8+
+  echo "from A" > "$T/A/dev/App/a.txt"; echo "new" > "$T/A/dev/App/new.txt"
+  answer_requests B &
+  ROAM_SYNC_WAIT=30 on A sync App
+  wait
+  check "sync failed" [ $RC = 0 ] || return 1
+  check "B didn't get A's change" grep -qx "from A" "$T/B/dev/App/a.txt" || return 1
+  check "B didn't get A's new file" [ -f "$T/B/dev/App/new.txt" ] || return 1
+  case $OUT in *"in sync"*) ;; *) fail "not reported as in sync"; return 1 ;; esac
+  on A status
+  case $OUT in *"≡ in sync"*) ;; *) fail "status doesn't mark App as in sync"; return 1 ;; esac
+}
+
+t_sync_merges_work_from_both_macs() {
+  on B status
+  printf 'one\ntwo\nthree\n' > "$T/A/dev/App/b.txt"; ( cd "$T/A/dev/App" && git add b.txt && git -c user.name=t -c user.email=t@t commit -qm b && git push -q origin HEAD:main 2>/dev/null )
+  on B resume
+  printf 'ONE\ntwo\nthree\n' > "$T/A/dev/App/b.txt"
+  printf 'one\ntwo\nTHREE\n' > "$T/B/dev/App/b.txt"
+  answer_requests B &
+  ROAM_SYNC_WAIT=30 on A sync App
+  wait
+  check "A lacks B's edit" grep -qx THREE "$T/A/dev/App/b.txt" || return 1
+  check "B lacks A's edit" grep -qx ONE "$T/B/dev/App/b.txt" || return 1
+  case $OUT in *"in sync"*) ;; *) fail "not in sync after merging"; return 1 ;; esac
+}
+
+t_projects_that_differ_are_not_in_sync() {
+  on B status
+  echo "only A" > "$T/A/dev/App/a.txt"
+  on A status
+  case $OUT in *"≠"*) ;; *) fail "a difference isn't marked"; return 1 ;; esac
+}
+
+t_an_old_request_is_dropped() {
+  mkdir -p "$T/pool/requests/B"
+  printf 'from=A\nproject=App\naction=sync\ntime=1\n' > "$T/pool/requests/B/old.req"
+  echo "from A" > "$T/A/dev/App/a.txt"; on A park
+  on B auto
+  check "the request is still there" [ ! -f "$T/pool/requests/B/old.req" ] || return 1
+  check "an expired request was answered" [ ! -f "$T/pool/answers/A/old.ans" ] || return 1
+  check "an expired request touched B's files" grep -qx hello "$T/B/dev/App/a.txt"
 }
 
 t_scripts_are_bash32_clean() {

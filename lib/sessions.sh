@@ -513,7 +513,7 @@ sess_digest_write() {  # $1 name, $2 path — this Mac's newest sessions for the
   stampf="$SESS_CACHE/$1.stamp"
   [ -f "$dir/$1.txt" ] && [ "$(cat "$stampf" 2>/dev/null)" = "$stamp" ] && return 0
   mkdir -p "$dir" "$SESS_CACHE" || return 0
-  out="$dir/.$1.$$.tmp"
+  out=$(mktemp)
   {
     echo "v=1"; echo "mac=$MAC"; echo "written=$(date +%s)"; echo "roam=$ROAM_VERSION"
     printf '%s\n' "$rows" | head -8 | awk -F'\t' -v OFS='\t' 'NF { print "session=" $3, $4, $5, $6, $7, $8, $9 }'
@@ -529,7 +529,7 @@ sess_digest_write() {  # $1 name, $2 path — this Mac's newest sessions for the
       done
     done
   } | head -c 8192 > "$out"
-  if cmp -s "$out" "$dir/$1.txt"; then rm -f "$out"; else mv "$out" "$dir/$1.txt"; fi
+  if cmp -s "$out" "$dir/$1.txt"; then rm -f "$out"; else pool_put "$out" "$dir/$1.txt"; fi
   printf '%s\n' "$stamp" > "$stampf"
 }
 

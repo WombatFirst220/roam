@@ -3,33 +3,56 @@
 # Every Mac writes <pool>/macs/<Mac>.txt on each command and in the background, so each Mac can see
 # the others even while they sleep. Work in flight always comes fresh from the git remote.
 #   key=value lines; lists use tabs:
-#   project=<name>\t<branch>\t<dirty>\t<ahead>\t<parked yes|no>     or  <name>\tmissing
+#   project=<name>\t<branch>\t<dirty>\t<ahead>\t<parked yes|no>\t<HEAD>\t<working tree>     or  <name>\tmissing
+#     HEAD and working tree (incl. uncommitted and untracked files) are hashes: equal on every Mac = in sync
 #   local=<name>\t<path>          an ignored local file (name only — never contents)
 #   issue=<level>\t<area>\t<text>  unmet prerequisite
 
 TAB=$(printf '\t')
 
 val() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1; }
-mac_files() { ls "$MACS_DIR"/*.txt 2>/dev/null; }
+# kDrive sets aside a file it couldn't sync as <name>_blacklisted_<date>_<id>.txt — not a Mac of its own
+mac_files() { ls "$MACS_DIR"/*.txt 2>/dev/null | grep -v -E '_blacklisted_|conflict'; }
+
+# A finished file goes into the pool in place. A temp file inside the synced folder plus a rename made
+# kDrive blacklist the file and keep a cut-off copy (2026-10-07) — so the temp file lives outside.
+pool_put() {  # $1 finished file (removed), $2 its place in the pool
+  cat "$1" > "$2" && rm -f "$1"
+}
 short_name() { printf '%s' "$1" | sed -E "s/^.*[’']s //; s/ (von|de|of) .*$//"; }
 mac_label() { local n; n=$(val name "$MACS_DIR/$1.txt"); short_name "${n:-$1}"; }
 short_path() { printf '%s' "$1" | sed "s#^$HOME#~#; s#^~/Library/Mobile Documents/com~apple~CloudDocs#iCloud Drive#; s#^~/Library/CloudStorage/##"; }
 
-project_state() {  # $1 path → branch, dirty, ahead, parked (tab separated) or "missing"
-  local p=$1 branch dirty ahead parked=no
+project_state() {  # $1 path → branch, dirty, ahead, parked, HEAD, working tree (tab separated) or "missing"
+  local p=$1 branch dirty ahead parked=no head tree
   [ -d "$p/.git" ] || { echo missing; return; }
   branch=$(git -C "$p" symbolic-ref --short -q HEAD || echo "(detached)")
   dirty=$(git -C "$p" status --porcelain --untracked-files=normal 2>/dev/null | wc -l | tr -d ' ')
   ahead=$(git -C "$p" rev-list --count "@{u}..HEAD" 2>/dev/null || echo "?")
   git -C "$p" rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null && parked=yes
-  printf '%s\t%s\t%s\t%s\n' "$branch" "$dirty" "$ahead" "$parked"
+  head=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null) head=${head:0:12}
+  tree=$(cd "$p" && worktree_tree 2>/dev/null) tree=${tree:0:12}
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$branch" "$dirty" "$ahead" "$parked" "${head:--}" "${tree:--}"
+}
+
+# In sync: every Mac that has the project is on the same branch and commit, with the same working tree
+# (uncommitted and untracked files included). Unknown with only one Mac, or a Mac on roam before 1.8.
+sync_verdict() {  # stdin: one project state per Mac → "sync", "differs" or nothing
+  awk -F'\t' '$1 == "missing" || $1 == "" { next }
+    $6 == "" || $6 == "-" { unknown = 1; next }
+    { k = $1 FS $5 FS $6; n++; if (n == 1) first = k; else if (k != first) diff = 1 }
+    END { if (diff) print "differs"; else if (n >= 2 && !unknown) print "sync" }'
+}
+sync_state() {  # $1 project → sync_verdict from the pool's status files
+  local f
+  for f in $(mac_files); do sed -n "s/^project=$1$TAB//p" "$f" | head -1; done | sync_verdict
 }
 
 registry_write() {
   local target="$MACS_DIR/$MAC.txt" tmp name dir remote extra f v
   mkdir -p "$MACS_DIR" || return
-  rm -f "$MACS_DIR"/.$MAC.*.tmp   # leftovers of interrupted runs
-  tmp="$MACS_DIR/.$MAC.$$.tmp"
+  rm -f "$MACS_DIR"/.$MAC.*.tmp "$MACS_DIR/${MAC}_blacklisted_"*.txt "$POOL/sessions/$MAC/"*_blacklisted_*.txt   # leftovers of older versions, kDrive's set-aside copies of our own files
+  tmp=$(mktemp)
   {
     echo "mac=$MAC"
     echo "hwid=$(hardware_id)"
@@ -56,7 +79,7 @@ EOF
   # a rewrite every 10 minutes filled it with hundreds. seen= still gets refreshed every HEARTBEAT seconds.
   if [ -f "$target" ] && [ $(( $(date +%s) - $(v=$(val seen "$target"); echo "${v:-0}") )) -lt "$HEARTBEAT" ] &&
      cmp -s <(grep -v '^seen=' "$tmp") <(grep -v '^seen=' "$target"); then rm -f "$tmp"; return 0; fi
-  mv "$tmp" "$target"   # regardless of the last loop's exit status (an uncloned last project returns 1)
+  pool_put "$tmp" "$target"   # regardless of the last loop's exit status (an uncloned last project returns 1)
 }
 
 hardware_id() { ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/{print $4}'; }
@@ -192,13 +215,14 @@ render_report() {  # $1 report file
   done < "$1"
 }
 
-run_all() {  # $1 park|resume|auto → sets ERRORS
-  local mode=$1 name dir remote extra out verb
+run_all() {  # $1 park|resume|auto, $2 only this project (optional) → sets ERRORS
+  local mode=$1 only=${2:-} name dir remote extra out verb
   ERRORS=0
   pool_prefer_ssh
   case $mode in park) verb="parking" ;; resume) verb="resuming" ;; *) verb="syncing" ;; esac
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
+    [ -z "$only" ] || [ "$name" = "$only" ] || continue
     out=$(mktemp)
     if [ "$mode" = auto ] || [ "$UI_FANCY" != 1 ]; then
       ( REPORT_OUT=$out; run_project "$mode" "$name" "$dir" "$remote" )
@@ -217,6 +241,103 @@ run_all() {  # $1 park|resume|auto → sets ERRORS
 $(projects)
 EOF
   cd "$HOME"
+}
+
+# ---------------------------------------------------------------- sync one project, on every Mac
+# No server: a request is a file in the pool, requests/<Mac>/<id>.req, written by the asking Mac only.
+# The Mac it's for picks it up in its background run — at once where launchd watches that folder, else
+# within the auto-park interval — parks and resumes the project and answers in answers/<asking Mac>/.
+# Requests older than 30 minutes are dropped: a Mac waking up tomorrow shouldn't act on today's click.
+REQUEST_TTL=1800
+SYNC_WAIT=${ROAM_SYNC_WAIT:-90}
+
+request_send() {  # $1 Mac, $2 project → the request id
+  local id tmp
+  id="$(date +%s)-$MAC-$$-$RANDOM"
+  mkdir -p "$POOL/requests/$1" || return 1
+  tmp=$(mktemp)
+  printf 'from=%s\nproject=%s\naction=sync\ntime=%s\n' "$MAC" "$2" "$(date +%s)" > "$tmp"
+  pool_put "$tmp" "$POOL/requests/$1/$id.req" && echo "$id"
+}
+
+requests_handle() {  # answer the other Macs' sync requests for this Mac (in the background run)
+  local f id from project time line name dir remote extra out tmp
+  for f in "$POOL/requests/$MAC"/*.req; do
+    [ -f "$f" ] || continue
+    id=$(basename "$f" .req) from=$(val from "$f") project=$(val project "$f") time=$(val time "$f")
+    rm -f "$f"
+    if [ $(( $(date +%s) - ${time:-0} )) -ge $REQUEST_TTL ]; then log "request from $from for $project expired — ignored"; continue; fi
+    line=$(projects | awk -v n="$project" '$1 == n')
+    [ -n "$line" ] || continue
+    read -r name dir remote extra <<EOF
+$line
+EOF
+    out=$(mktemp)
+    # park (this Mac's work to the remote), resume (the asking Mac's work here, merged if both changed),
+    # park again (a merge goes back, so the asking Mac ends up with exactly this state)
+    ( REPORT_OUT=$out; run_project park "$name" "$dir" "$remote"; run_project resume "$name" "$dir" "$remote"
+      : > "$out.park"; REPORT_OUT=$out.park; run_project park "$name" "$dir" "$remote"; rm -f "$out.park" )
+    registry_write
+    notify "$project synced — asked from $(mac_label "$from")"
+    mkdir -p "$POOL/answers/$from"
+    tmp=$(mktemp); { echo "mac=$MAC"; cat "$out"; } > "$tmp"
+    pool_put "$tmp" "$POOL/answers/$from/$id.ans"
+    rm -f "$out"
+  done
+}
+
+sync_cmd() {  # [project] — the project in the same state on every Mac: park here, ask the others, take theirs
+  local m f ids="" waiting="" id t0 errs=0 v verdict
+  pick_project "${1:-}" "Sync which project?" || return 1
+  lock
+  header "sync $P_NAME" "$(short_name "$(scutil --get ComputerName)")"; echo
+  run_all park "$P_NAME"; errs=$ERRORS
+  # every other Mac that has the project: online and on roam 1.8+ → ask it; else say when it catches up
+  for f in $(mac_files); do
+    m=$(basename "$f" .txt); [ "$m" = "$MAC" ] && continue
+    grep -q "^project=$P_NAME$TAB" "$f" || continue
+    v=$(val version "$f")
+    if ! version_ge "${v:-0}" 1.8.0; then say_info "$(mac_label "$m") runs roam ${v:-?} — from 1.8 on it can be synced from here"; continue; fi
+    if [ $(( $(date +%s) - $(t=$(val seen "$f"); echo "${t:-0}") )) -ge "$ONLINE_SECS" ]; then
+      say_info "$(mac_label "$m") is offline — it catches up when it's back (roam resume there)"; continue; fi
+    id=$(request_send "$m" "$P_NAME") && { ids="$ids $id"; waiting="$waiting $m"; }
+  done
+  if [ -n "$ids" ]; then
+    echo
+    ( t0=$(date +%s)
+      while [ $(( $(date +%s) - t0 )) -lt "$SYNC_WAIT" ]; do
+        n=0; for id in $ids; do [ -f "$POOL/answers/$MAC/$id.ans" ] && n=$((n + 1)); done
+        [ $n = $(echo $ids | wc -w) ] && exit 0
+        sleep 2
+      done ) & spin_while $! "${C_MUTED}waiting for$(for m in $waiting; do printf ' %s' "$(mac_label "$m")"; done)…${C_RESET}"
+    for id in $ids; do
+      f="$POOL/answers/$MAC/$id.ans"
+      if [ -f "$f" ]; then
+        m=$(val mac "$f")
+        sed -n '/^mac=/!p' "$f" | while IFS="$TAB" read -r level name msg; do
+          case $level in ok) printf '  %s %s %s\n' "$I_OK" "$(pad "${C_BOLD}$(mac_label "$m")${C_RESET}" 13)" "$msg" ;;
+                        err) printf '  %s %s %s\n' "$I_ERR" "$(pad "${C_BOLD}$(mac_label "$m")${C_RESET}" 13)" "$msg" ;;
+                        *) printf '  %s %s %s\n' "${C_MUTED}·${C_RESET}" "$(pad "${C_BOLD}$(mac_label "$m")${C_RESET}" 13)" "$msg" ;; esac
+        done
+        grep -q "^err$TAB" "$f" && errs=$((errs + 1))
+        rm -f "$f"
+      else
+        say_info "no answer yet — the request stays valid for 30 min, the other Mac syncs when it picks it up"
+      fi
+    done
+    echo
+  fi
+  # what the others parked meanwhile comes here now
+  run_all resume "$P_NAME"; errs=$((errs + ERRORS))
+  registry_write
+  echo
+  verdict=$(sync_state "$P_NAME")
+  case $verdict in
+    sync) printf '  %s %s%s is in sync%s — the same on every Mac\n' "${C_OK}≡${C_RESET}" "$C_BOLD" "$P_NAME" "$C_RESET" ;;
+    differs) printf '  %s %s%s isn'"'"'t in sync yet%s — see above\n' "${C_WARN}≠${C_RESET}" "$C_BOLD" "$P_NAME" "$C_RESET" ;;
+    *) printf '  %s synced here; whether every Mac is the same shows once they all run roam 1.8\n' "$I_OK" ;;
+  esac
+  ERRORS=$errs
 }
 
 finish_park() {
@@ -261,7 +382,7 @@ EOF
 }
 
 dashboard() {  # $1 = "quick": skip fetching from the remotes
-  local f m macs="" now seen dot status doc missing hints n col name dir remote extra state sha time from br line
+  local f m macs="" now seen dot status doc missing hints n col name dir remote extra state states sha time from br line
   now=$(date +%s)
   if [ "${1:-}" != quick ]; then
     if [ "$UI_FANCY" = 1 ]; then ( fetch_everything ) & spin_while $! "${C_MUTED}checking the remotes…${C_RESET}"
@@ -288,25 +409,29 @@ dashboard() {  # $1 = "quick": skip fetching from the remotes
   box_bottom
 
   n=$(echo $macs | wc -w | tr -d ' '); [ "$n" -lt 1 ] && n=1
-  col=$(( ($(ui_width) - 6 - 14) / n )); [ $col -gt 26 ] && col=26
+  col=$(( ($(ui_width) - 6 - 14 - 12) / n )); [ $col -gt 26 ] && col=26   # 12: the sync column
   box_top "Projects"
   line="$(pad "" 14)"
   for m in $macs; do line="$line$(pad "${C_MUTED}$(trunc "$(mac_label "$m")" $((col - 2)))${C_RESET}" $col)"; done
   box_line "$line"
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
-    line="$(pad "${C_BOLD}$(trunc "$name" 13)${C_RESET}" 14)"
+    line="$(pad "${C_BOLD}$(trunc "$name" 13)${C_RESET}" 14)" states=""
     for m in $macs; do
       if [ "$m" = "$MAC" ]; then state=$(project_state "$PROJECTS_DIR/$dir")
       else state=$(sed -n "s/^project=$name$TAB//p" "$MACS_DIR/$m.txt"); fi
-      line="$line$(pad "$(cell "$state")" $col)"
+      line="$line$(pad "$(cell "$state")" $col)" states="$states$state"$'\n'
     done
+    case $(printf '%s' "$states" | sync_verdict) in
+      sync) line="$line${C_OK}≡ in sync${C_RESET}" ;;
+      differs) line="$line${C_MUTED}≠ roam sync $name${C_RESET}" ;;
+    esac
     box_line "$line"
   done <<EOF
 $(projects)
 EOF
   [ -n "$(projects)" ] || box_line "${C_MUTED}no projects yet — add one: roam add <git remote>${C_RESET}"
-  box_line "${C_LINE}✓ clean · ●n uncommitted · ↑n unpushed · ☁ parked · — not cloned${C_RESET}"
+  box_line "${C_LINE}✓ clean · ●n uncommitted · ↑n unpushed · ☁ parked · — not cloned · ≡ the same on every Mac${C_RESET}"
   box_bottom
 
   box_top "In flight" "work parked on the remote"
