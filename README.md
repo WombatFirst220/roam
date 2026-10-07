@@ -85,7 +85,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.8.1                                                                               14:02
+ ◆ roam  v1.8.2                                                                               14:02
 ╭─ Projects ─────────────────────────── 4 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature… ●3 +1 ☁ ✻ 2m ● ││ Mac mini          feature/login ●3 +1 ☁              │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
