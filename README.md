@@ -39,7 +39,8 @@ roam setup
 ```
 
 That's it — on every Mac. Updates: `brew update && brew upgrade wombatfirst220/tap/roam`
-(always with the full name — Homebrew also has an unrelated cask called `roam`). The setup wizard walks you through everything:
+(always with the full name — Homebrew also has an unrelated cask called `roam`). Homebrew brings
+[age](https://age-encryption.org) along, for secrets that travel encrypted. The setup wizard walks you through everything:
 
 | | Step | What happens |
 |---|---|---|
@@ -233,7 +234,7 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
               └───────────┘                    └─────────────┘
                     │                                ▲
                     └────────► pool folder ──────────┘
-                     project list · Mac status · Claude Code memory
+          project list · Mac status · Claude Code · sync requests · encrypted secrets
 ```
 
 - **Snapshots, not branches.** `roam park` turns your whole working directory — uncommitted
@@ -280,6 +281,7 @@ Without any configuration, by looking at your projects:
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |
 | `X.example` | whether `X` exists locally |
 | an ignored file another Mac has | whether it's missing here (names only — contents never leave a Mac) |
+| `secrets=1` or `carry_secrets = 1` | age, to encrypt and decrypt them |
 
 `✗ missing` blocks your work, `• hint` only matters for some parts (backend, deployment, devices),
 `ⓘ info` is just worth knowing and never counts as a problem — optional templates and files that only
@@ -310,21 +312,44 @@ and a failed push says why instead of blaming the network.
 **`settings`** — `claude_sync`, `claude_history` (0 = memory only, no transcripts),
 `session_digest` (0/1/2, see above), `carry_secrets` (1 = every project's secrets travel, see above), `interval_min`, `max_file_mb`.
 
-Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`).
+Per Mac, `roam setup` writes `~/.config/roam/config` (`pool`, `projects_dir`); the age key for secrets
+is `~/.config/roam/age.key` and never leaves the Mac.
+
+**In the pool folder**, besides those two files — every file has exactly one Mac that writes it, so the
+sync app never has two versions to reconcile:
+
+| | |
+|---|---|
+| `macs/<Mac>.txt` | each Mac's state: macOS, Xcode, doctor results, per project branch, open changes and the hashes behind ≡, its public age key |
+| `claude/<project>/` | Claude Code memory and (with `claude_history = 1`) transcripts |
+| `sessions/<Mac>/<project>.txt` | where that Mac's AI sessions stopped |
+| `secrets/<project>/<Mac>.age` | that Mac's secrets of the project, encrypted for every Mac's key |
+| `requests/<Mac>/`, `answers/<Mac>/` | `roam sync` asking a Mac, and its answer — gone once read |
+
+**Environment** — `ROAM_POOL_TIMEOUT` (seconds a pool read may take before roam gives up, 30),
+`ROAM_SYNC_TIMEOUT` (Claude Code files and secrets, 300), `ROAM_SYNC_WAIT` (how long `roam sync` waits for
+the other Macs, 90), `ROAM_HEARTBEAT` (how often a Mac refreshes its "seen", 3600), `ROAM_COLOR`,
+`ROAM_MOUSE`, `ROAM_PLAIN` (see The app).
 
 ## Good to know
 
 - What was **staged** isn't preserved — changes come back as unstaged.
-- **Ignored files** (credentials, `Local.xcconfig`) deliberately don't travel. `roam doctor` tells
-  you where they're missing.
+- **Ignored files** (credentials, `Local.xcconfig`) don't travel unless you switch on `secrets=1` for
+  the project (key **e**) — then `.env*` and `local=` files go along, encrypted. `roam doctor` tells you
+  where they're missing.
+- A Mac counts as **online** while its heartbeat is fresh — refreshed at least hourly, so a Mac that was
+  just switched off still shows as online for up to about 75 minutes. `roam sync` asks it anyway; it
+  answers when it's back, within 30 minutes, or the request lapses.
+- **Sync apps:** keep the pool folder available offline. roam writes pool files in place (a temp file
+  plus rename made kDrive set files aside as `…_blacklisted_…`) and ignores such set-aside copies.
 - A **running** Claude Code session doesn't move. End it, `roam resume` on the other Mac, then
   `claude --resume`.
 - Session transcripts contain everything a session saw. Don't want them in your sync folder?
   `claude_history = 0`.
 - The session digests are written on every park, resume and background run — but only rewritten
   when a session changed.
-- Plain bash, git and rsync — what macOS ships. Nothing to compile, nothing running but a
-  LaunchAgent every few minutes.
+- Plain bash, git and rsync — what macOS ships, plus age from Homebrew for secrets. Nothing to compile,
+  nothing running but a LaunchAgent every few minutes and when another Mac asks for a sync.
 
 ## Development
 
