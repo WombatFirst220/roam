@@ -9,13 +9,29 @@
 #
 # Every function reports through `report ok|info|err <project> <message>`.
 
-is_clean() { [ -z "$(git status --porcelain --untracked-files=normal)" ]; }
+# What macOS and the sync apps leave in every folder they touch is never work: not counted, not parked,
+# not part of the in-sync check. Finder: .DS_Store, ._* (AppleDouble), Icon\r (custom folder icons);
+# iCloud Drive: .<name>.icloud for a file that only lives in the cloud; Dropbox: .dropbox, .dropbox.attr;
+# OneDrive, Google Drive, kDrive, Nextcloud, Synology Drive: their temp files while a download runs.
+# A pathspec, not an ignore rule: the project's .gitignore and your global one stay as they are.
+JUNK=(':(exclude,glob)**/.DS_Store' ':(exclude,glob)**/._*' $':(exclude,glob)**/Icon\r' ':(exclude,glob)**/.*.icloud'
+  ':(exclude,glob)**/.dropbox' ':(exclude,glob)**/.dropbox.attr' ':(exclude,glob)**/.~*' ':(exclude,glob)**/~$*'
+  ':(exclude,glob)**/*.partial' ':(exclude,glob)**/.sync_*.db*' ':(exclude,glob)**/.SynologyWorkingDirectory/**')
+is_junk() {  # $1 path → is it one of those files?
+  case ${1##*/} in .DS_Store|._*|$'Icon\r'|.*.icloud|.dropbox|.dropbox.attr|.~*|'~$'*|*.partial|.sync_*.db*) return 0 ;; esac
+  case /$1 in */.SynologyWorkingDirectory/*) return 0 ;; esac
+  return 1
+}
+git_status() { git status --porcelain --untracked-files=normal "$@" -- . "${JUNK[@]}"; }   # without that junk
+untracked() { git ls-files --others --exclude-standard -- . "${JUNK[@]}"; }
+
+is_clean() { [ -z "$(git_status)" ]; }
 
 worktree_tree() {  # tree object of the working directory incl. untracked files; the real index stays untouched
   local idx
   idx=$(mktemp)
   cp "$(git rev-parse --git-path index)" "$idx" 2>/dev/null || rm -f "$idx"
-  GIT_INDEX_FILE=$idx git add -A . >/dev/null 2>&1
+  GIT_INDEX_FILE=$idx git add -A -- . "${JUNK[@]}" >/dev/null 2>&1
   GIT_INDEX_FILE=$idx git write-tree
   rm -f "$idx"
 }
@@ -130,14 +146,14 @@ park_project() {  # $1 name; cwd is the project
     return
   fi
 
-  f=$(git ls-files --others --exclude-standard | grep -E "$SECRET_PATTERN" | head -3 | tr '\n' ' ')
+  f=$(untracked | grep -E "$SECRET_PATTERN" | head -3 | tr '\n' ' ')
   if [ -n "$f" ]; then report err "$name" "untracked secret-looking files (${f% }) — add them to .gitignore"; return; fi
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     size=$(stat -f %z "$f")
     if [ "$size" -gt "$MAX_BYTES" ]; then report err "$name" "$f is $((size / 1048576)) MB — add it to .gitignore"; return; fi
   done <<EOF
-$(git ls-files --others --exclude-standard)
+$(untracked)
 EOF
 
   branch=$(git symbolic-ref --short -q HEAD || echo "-")
@@ -405,6 +421,9 @@ claude_sync() {  # $1 name, $2 project path, $3 up|down
   [ -d "$src" ] || return 0
   mkdir -p "$dst" || return
   bad=$(mktemp)
+  # Copies a sync app set aside next to a file ("… 2.jsonl", "… (conflicted copy …).md") never travel:
+  # Claude Code would list one as a session of its own. The real file is merged as usual; doctor lists them.
+  ( cd "$src" && [ -d "$scope" ] && find "$scope" -type f ) | sed 's#^\./##' | grep -i -E "$COPY_RE" | sed 's/[][*?]/\\&/g; s#^#/#' >> "$bad"   # literal names for rsync
   # Placeholders never travel; a good copy on the other side repairs one there.
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -417,7 +436,7 @@ claude_sync() {  # $1 name, $2 project path, $3 up|down
       transcript_meet "$src/$f" "$dst/$f" "$1" "$f"; printf '/%s\n' "$f" >> "$bad"
     fi
   done <<EOF
-$(cd "$src" && [ -d "$scope" ] && find "$scope" -type f)
+$(cd "$src" && [ -d "$scope" ] && find "$scope" -type f | grep -v -i -E "$COPY_RE")
 EOF
   # --update: the newer file wins. Transcripts have unique names; conflicts can only happen
   # with memory files edited on two Macs at the same time. The placeholder list comes first:

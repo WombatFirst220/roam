@@ -3,7 +3,9 @@
 # Every Mac writes <pool>/macs/<Mac>.txt on each command and in the background, so each Mac can see
 # the others even while they sleep. Work in flight always comes fresh from the git remote.
 #   key=value lines; lists use tabs:
-#   project=<name>\t<branch>\t<dirty>\t<ahead>\t<parked yes|no>\t<HEAD>\t<working tree>     or  <name>\tmissing
+#   project=<name>\t<branch>\t<dirty>\t<ahead>\t<parked yes|no>\t<HEAD>\t<working tree>\t<new>     or  <name>\tmissing
+#     dirty: changed and new files together, without what macOS and sync apps leave behind (JUNK);
+#     new: of those, files and folders never committed (roam 1.8.1 on — older Macs leave it out)
 #     HEAD and working tree (incl. uncommitted and untracked files) are hashes: equal on every Mac = in sync
 #   local=<name>\t<path>          an ignored local file (name only — never contents)
 #   issue=<level>\t<area>\t<text>  unmet prerequisite
@@ -11,8 +13,30 @@
 TAB=$(printf '\t')
 
 val() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1; }
-# kDrive sets aside a file it couldn't sync as <name>_blacklisted_<date>_<id>.txt — not a Mac of its own
-mac_files() { ls "$MACS_DIR"/*.txt 2>/dev/null | grep -v -E '_blacklisted_|conflict'; }
+# A Mac's status file is <Mac>.txt with mac=<Mac> in it. When two Macs write one file at once, or one can't be
+# synced, the sync app keeps a copy next to it: iCloud "A 2.txt", Dropbox and Nextcloud "A (… conflicted
+# copy …).txt", Google Drive "A (1).txt", OneDrive "A-<computer>.txt", kDrive "A_blacklisted_<date>.txt".
+# Such a copy is no Mac of its own — its name and its mac= line disagree. One path per line: pool folders
+# have spaces (Mobile Documents, My Drive, "OneDrive - Company"), so callers read lines, never words.
+mac_files() {
+  local f m
+  for f in "$MACS_DIR"/*.txt; do
+    [ -f "$f" ] || continue
+    m=${f##*/}; [ "$(val mac "$f")" = "${m%.txt}" ] && printf '%s\n' "$f"
+  done
+  return 0
+}
+own_copies() {  # this Mac's own files the sync app set aside: same mac=, another name
+  local f m
+  for f in "$MACS_DIR"/*.txt; do
+    [ -f "$f" ] || continue
+    m=${f##*/}; [ "${m%.txt}" != "$MAC" ] && [ "$(val mac "$f")" = "$MAC" ] && printf '%s\n' "$f"
+  done
+  return 0
+}
+# The same kind of copies anywhere in the pool (Claude Code files, session digests): never taken for the real one
+COPY_RE='_blacklisted_| [0-9]+(\.[^/ ]+)?$| \([0-9]+\)(\.[^/ ]+)?$|conflicted copy|\((conflict|konflikt)|[_ -](conflict|konflikt)[_ .]|\[conflicted\]'
+is_sync_copy() { printf '%s' "${1##*/}" | grep -q -i -E "$COPY_RE"; }
 
 # A finished file goes into the pool in place. A temp file inside the synced folder plus a rename made
 # kDrive blacklist the file and keep a cut-off copy (2026-10-07) — so the temp file lives outside.
@@ -23,16 +47,18 @@ short_name() { printf '%s' "$1" | sed -E "s/^.*[’']s //; s/ (von|de|of) .*$//"
 mac_label() { local n; n=$(val name "$MACS_DIR/$1.txt"); short_name "${n:-$1}"; }
 short_path() { printf '%s' "$1" | sed "s#^$HOME#~#; s#^~/Library/Mobile Documents/com~apple~CloudDocs#iCloud Drive#; s#^~/Library/CloudStorage/##"; }
 
-project_state() {  # $1 path → branch, dirty, ahead, parked, HEAD, working tree (tab separated) or "missing"
-  local p=$1 branch dirty ahead parked=no head tree
+project_state() {  # $1 path → branch, dirty, ahead, parked, HEAD, working tree, new (tab separated) or "missing"
+  local p=$1 branch dirty new ahead parked=no head tree st
   [ -d "$p/.git" ] || { echo missing; return; }
   branch=$(git -C "$p" symbolic-ref --short -q HEAD || echo "(detached)")
-  dirty=$(git -C "$p" status --porcelain --untracked-files=normal 2>/dev/null | wc -l | tr -d ' ')
+  st=$(cd "$p" && git_status 2>/dev/null)
+  dirty=$(printf '%s' "$st" | grep -c '^')   # lines; no output counts 0
+  new=$(printf '%s' "$st" | grep -c '^??')
   ahead=$(git -C "$p" rev-list --count "@{u}..HEAD" 2>/dev/null || echo "?")
   git -C "$p" rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null && parked=yes
   head=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null) head=${head:0:12}
   tree=$(cd "$p" && worktree_tree 2>/dev/null) tree=${tree:0:12}
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$branch" "$dirty" "$ahead" "$parked" "${head:--}" "${tree:--}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$branch" "$dirty" "$ahead" "$parked" "${head:--}" "${tree:--}" "$new"
 }
 
 # In sync: every Mac that has the project is on the same branch and commit, with the same working tree
@@ -45,13 +71,16 @@ sync_verdict() {  # stdin: one project state per Mac → "sync", "differs" or no
 }
 sync_state() {  # $1 project → sync_verdict from the pool's status files
   local f
-  for f in $(mac_files); do sed -n "s/^project=$1$TAB//p" "$f" | head -1; done | sync_verdict
+  mac_files | while IFS= read -r f; do sed -n "s/^project=$1$TAB//p" "$f" | head -1; done | sync_verdict
 }
 
 registry_write() {
   local target="$MACS_DIR/$MAC.txt" tmp name dir remote extra f v
   mkdir -p "$MACS_DIR" || return
-  rm -f "$MACS_DIR"/.$MAC.*.tmp "$MACS_DIR/${MAC}_blacklisted_"*.txt "$POOL/sessions/$MAC/"*_blacklisted_*.txt   # leftovers of older versions, kDrive's set-aside copies of our own files
+  rm -f "$MACS_DIR"/.$MAC.*.tmp   # leftovers of older versions
+  # the sync app's set-aside copies of our own files: the real one is rewritten right below
+  own_copies | while IFS= read -r f; do rm -f "$f"; done
+  for f in "$POOL/sessions/$MAC"/*; do [ -f "$f" ] && is_sync_copy "$f" && rm -f "$f"; done
   tmp=$(mktemp)
   {
     echo "mac=$MAC"
@@ -88,14 +117,16 @@ adopt_identity() {  # take over registry entries and snapshots this Mac left und
   local hw me f old olds="" name dir remote extra sha
   [ -n "${ROAM_MAC:-}" ] && return 0   # id given explicitly: nothing to take over
   hw=$(hardware_id); me=$(scutil --get ComputerName 2>/dev/null)
-  for f in $(mac_files); do
+  while IFS= read -r f; do [ -n "$f" ] || continue
     old=$(basename "$f" .txt)
     [ "$old" = "$MAC" ] && continue
     # same machine: same hardware id, or — for entries from before hwid existed — the same computer name
     if [ -n "$hw" ] && [ "$(val hwid "$f")" = "$hw" ] || { [ -z "$(val hwid "$f")" ] && [ -n "$me" ] && [ "$(val name "$f")" = "$me" ]; }; then
       olds="$olds $old"; rm -f "$f"
     fi
-  done
+  done <<EOF
+$(mac_files)
+EOF
   # The Bonjour name (…-7) is only an old id if snapshots exist under it. Checked locally: fetching every
   # project to find out cost each roam command — and every background run — several seconds.
   if [ "$MAC_LOCAL" != "$MAC" ]; then
@@ -136,10 +167,12 @@ EOF
 
 other_local_files() {  # $1 project → "<mac name>\t<path>" from the other Macs' files
   local f
-  for f in $(mac_files); do
+  while IFS= read -r f; do [ -n "$f" ] || continue
     [ "$(basename "$f" .txt)" = "$MAC" ] && continue
     sed -n "s/^local=$1$TAB//p" "$f" | sed "s/^/$(val name "$f")$TAB/"
-  done
+  done <<EOF
+$(mac_files)
+EOF
 }
 
 # ---------------------------------------------------------------- park / resume with progress
@@ -293,7 +326,7 @@ sync_cmd() {  # [project] — the project in the same state on every Mac: park h
   header "sync $P_NAME" "$(short_name "$(scutil --get ComputerName)")"; echo
   run_all park "$P_NAME"; errs=$ERRORS
   # every other Mac that has the project: online and on roam 1.8+ → ask it; else say when it catches up
-  for f in $(mac_files); do
+  while IFS= read -r f; do [ -n "$f" ] || continue
     m=$(basename "$f" .txt); [ "$m" = "$MAC" ] && continue
     grep -q "^project=$P_NAME$TAB" "$f" || continue
     v=$(val version "$f")
@@ -301,7 +334,9 @@ sync_cmd() {  # [project] — the project in the same state on every Mac: park h
     if [ $(( $(date +%s) - $(t=$(val seen "$f"); echo "${t:-0}") )) -ge "$ONLINE_SECS" ]; then
       say_info "$(mac_label "$m") is offline — it catches up when it's back (roam resume there)"; continue; fi
     id=$(request_send "$m" "$P_NAME") && { ids="$ids $id"; waiting="$waiting $m"; }
-  done
+  done <<EOF
+$(mac_files)
+EOF
   if [ -n "$ids" ]; then
     echo
     ( t0=$(date +%s)
@@ -353,8 +388,8 @@ finish_resume() {
 
 # ---------------------------------------------------------------- dashboard
 cell() {  # project state (tab separated) → short colored cell
-  local branch dirty ahead parked t
-  IFS="$TAB" read -r branch dirty ahead parked <<EOF
+  local branch dirty ahead parked new t
+  IFS="$TAB" read -r branch dirty ahead parked _ _ new <<EOF
 $1
 EOF
   [ "$branch" = missing ] && { printf '%s—%s' "$C_LINE" "$C_RESET"; return; }
@@ -363,7 +398,9 @@ EOF
   if [ "${dirty:-0}" = 0 ] && { [ "${ahead:-0}" = 0 ] || [ "$ahead" = "?" ]; }; then
     t="$t ${C_OK}✓${C_RESET}"
   else
-    [ "${dirty:-0}" != 0 ] && t="$t ${C_WARN}●$dirty${C_RESET}"
+    # a Mac before 1.8.1 doesn't tell new files apart: all of them count as changed
+    [ $(( ${dirty:-0} - ${new:-0} )) -gt 0 ] && t="$t ${C_WARN}●$(( ${dirty:-0} - ${new:-0} ))${C_RESET}"
+    [ "${new:-0}" -gt 0 ] && t="$t ${C_WARN}+$new${C_RESET}"
     [ "${ahead:-0}" != 0 ] && [ "$ahead" != "?" ] && t="$t ${C_CYAN}↑$ahead${C_RESET}"
   fi
   [ "$parked" = yes ] && t="$t ${C_ACCENT}☁${C_RESET}"
@@ -393,7 +430,7 @@ dashboard() {  # $1 = "quick": skip fetching from the remotes
   echo
 
   box_top "Macs"
-  for f in $(mac_files); do
+  while IFS= read -r f; do [ -n "$f" ] || continue
     m=$(basename "$f" .txt); macs="$macs $m"
     seen=$(val seen "$f")
     if [ "$m" = "$MAC" ]; then dot="${C_ACCENT}▸${C_RESET}"; status="${C_ACCENT}this Mac${C_RESET}"
@@ -404,7 +441,9 @@ dashboard() {  # $1 = "quick": skip fetching from the remotes
     elif [ "${missing:-0}" -gt 0 ]; then doc="${C_ERR}✗ $missing missing${C_RESET}"
     else doc="${C_OK}✓ ready${C_RESET}"; fi
     box_line "$dot $(pad "${C_BOLD}$(trunc "$(short_name "$(val name "$f")")" 18)${C_RESET}" 19) $(pad "$status" 12) ${C_MUTED}macOS $(pad "$(val macos "$f")" 8)Xcode $(pad "$(val xcode "$f" | sed 's/^$/–/')" 6)${C_RESET} $doc"
-  done
+  done <<EOF
+$(mac_files)
+EOF
   [ -n "$macs" ] || box_line "${C_MUTED}no Mac in this pool yet${C_RESET}"
   box_bottom
 
@@ -431,7 +470,7 @@ dashboard() {  # $1 = "quick": skip fetching from the remotes
 $(projects)
 EOF
   [ -n "$(projects)" ] || box_line "${C_MUTED}no projects yet — add one: roam add <git remote>${C_RESET}"
-  box_line "${C_LINE}✓ clean · ●n uncommitted · ↑n unpushed · ☁ parked · — not cloned · ≡ the same on every Mac${C_RESET}"
+  box_line "${C_LINE}✓ clean · ●n changed · +n new, never committed · ↑n unpushed · ☁ parked · — not cloned · ≡ the same on every Mac${C_RESET}"
   box_bottom
 
   box_top "In flight" "work parked on the remote"

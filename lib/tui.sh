@@ -222,9 +222,9 @@ SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 spinner() { REPLY="${K_ACC}${SPIN:$((TICKS % 10)):1}${K_R}"; }
 
 # ---------------------------------------------------------------- data (gathered outside the render path)
-tcell() {  # $1 project state (branch, dirty, ahead, parked — tabs) → REPLY, like cell() but without a subshell
-  local branch dirty ahead parked rest
-  IFS=$'\t' read -r branch dirty ahead parked rest <<EOF
+tcell() {  # $1 project state (branch, dirty, ahead, parked, HEAD, tree, new — tabs) → REPLY, like cell() but without a subshell
+  local branch dirty ahead parked new _h _t
+  IFS=$'\t' read -r branch dirty ahead parked _h _t new <<EOF
 $1
 EOF
   if [ "$branch" = missing ]; then REPLY="${K_LINE}—${K_R}"; return; fi
@@ -232,7 +232,9 @@ EOF
   tfit "$branch" 14; REPLY=$FIT
   if [ "${dirty:-0}" = 0 ] && { [ "${ahead:-0}" = 0 ] || [ "$ahead" = "?" ]; }; then REPLY="$REPLY ${K_OK}✓${K_R}"
   else
-    [ "${dirty:-0}" != 0 ] && REPLY="$REPLY ${K_WARN}●$dirty${K_R}"
+    # a Mac before 1.8.1 doesn't tell new files apart: all of them count as changed
+    [ $(( ${dirty:-0} - ${new:-0} )) -gt 0 ] && REPLY="$REPLY ${K_WARN}●$(( ${dirty:-0} - ${new:-0} ))${K_R}"
+    [ "${new:-0}" -gt 0 ] && REPLY="$REPLY ${K_WARN}+$new${K_R}"
     [ "${ahead:-0}" != 0 ] && [ "$ahead" != "?" ] && REPLY="$REPLY ${K_CYAN}↑$ahead${K_R}"
   fi
   [ "$parked" = yes ] && REPLY="$REPLY ${K_ACC}☁${K_R}"
@@ -253,8 +255,9 @@ $(projects)
 EOF
   for f in "$MACS_DIR"/*.txt; do
     [ -f "$f" ] || continue
-    case $f in *_blacklisted_*|*conflict*) continue ;; esac   # kDrive's set-aside copies, not Macs
-    m=${f##*/}; m=${m%.txt}; j=$NM; M_ID[j]=$m; NM=$((NM + 1))
+    m=${f##*/}; m=${m%.txt}
+    [ "$(val mac "$f")" = "$m" ] || continue   # a copy the sync app set aside, not a Mac (see mac_files)
+    j=$NM; M_ID[j]=$m; NM=$((NM + 1))
     local seen="" mname="" macos="" xcode="" doc=""
     while IFS= read -r l; do
       case $l in
@@ -327,8 +330,8 @@ EOF
 # Where work is going on right now, across all Macs: a running or recent (2 h) AI session, or open
 # changes on a Mac that is online. One row per Mac and project — running sessions first, then newest.
 now_build() {
-  local i j k key m tool upd live dirty rest t line icon what rows=""
-  local _s _i _b _n _r
+  local i j k key m tool upd live dirty new t line icon what rows=""
+  local _s _i _b _n _r _a _p _h _t
   NOW=$(date +%s) W_T=() W_TOOL=() W_LIVE=() NOW_L=()
   for ((i = 0; i < NP; i++)); do
     read_lines "$TUI_DIR/s.$i" || continue
@@ -347,10 +350,11 @@ EOF
   for ((j = 0; j < NM; j++)); do
     for ((i = 0; i < NP; i++)); do
       key=$((j * NP + i))
-      IFS=$'\t' read -r _b dirty rest <<EOF
+      IFS=$'\t' read -r _b dirty _a _p _h _t new <<EOF
 ${ST[$key]-}
 EOF
       [ "${M_FRESH[$j]}" = 1 ] && [ "${dirty:-0}" -gt 0 ] 2>/dev/null || dirty=0
+      new=${new:-0}; [ "$new" -le "$dirty" ] 2>/dev/null || new=0   # a Mac before 1.8.1 doesn't count new files
       [ -n "${W_T[$key]-}" ] || [ "$dirty" -gt 0 ] || continue
       if [ "${M_ID[$j]}" = "$MAC" ]; then tfit "${M_LABEL[$j]}" 14; tpad "${K_ACC}$FIT${K_R}" 16
       else tfit "${M_LABEL[$j]}" 14; tpad "$FIT" 16; fi
@@ -361,7 +365,8 @@ EOF
         if [ "${W_LIVE[$key]}" = 1 ]; then what="$icon $(sess_name "${W_TOOL[$key]}") ${K_OK}● running${K_R}"; t=$((NOW + 1))
         else tago "${W_T[$key]}"; what="$icon $(sess_name "${W_TOOL[$key]}") ${K_MUTED}· $REPLY ago${K_R}"; fi
       fi
-      [ "$dirty" -gt 0 ] && what="$what${what:+   }${K_WARN}●$dirty${K_R} ${K_MUTED}changed${K_R}"
+      [ $((dirty - new)) -gt 0 ] && what="$what${what:+   }${K_WARN}●$((dirty - new))${K_R} ${K_MUTED}changed${K_R}"
+      [ "$new" -gt 0 ] && what="$what${what:+   }${K_WARN}+$new${K_R} ${K_MUTED}new${K_R}"
       if [ "${W_LIVE[$key]-}" = 1 ]; then line="${K_OK}●${K_R} $line$what"; else line="${K_WARN}◐${K_R} $line$what"; fi
       rows="$rows$t"$'\t'"$line"$'\n'
     done
@@ -373,8 +378,12 @@ EOF
   return 0
 }
 
-tui_bg_sessions() {  # background: every project's Markdown files (quick) and AI sessions → $TUI_DIR/d.N, s.N, st.N
+tui_bg_sessions() {  # background: new files, Markdown files (quick) and AI sessions per project → $TUI_DIR/u.N, d.N, s.N, st.N
   local i row
+  for ((i = 0; i < NP; i++)); do
+    [ -d "$PROJECTS_DIR/${P_D[$i]}/.git" ] &&
+      ( cd "$PROJECTS_DIR/${P_D[$i]}" && git_status -z 2>/dev/null | tr '\0' '\n' | sed -n 's/^?? //p' ) > "$TUI_DIR/u.$i.tmp" && mv "$TUI_DIR/u.$i.tmp" "$TUI_DIR/u.$i"
+  done
   for ((i = 0; i < NP; i++)); do
     [ -d "$PROJECTS_DIR/${P_D[$i]}" ] && md_files "$PROJECTS_DIR/${P_D[$i]}" > "$TUI_DIR/d.$i.tmp" 2>/dev/null && mv "$TUI_DIR/d.$i.tmp" "$TUI_DIR/d.$i"
   done
@@ -390,7 +399,7 @@ tui_bg_sessions() {  # background: every project's Markdown files (quick) and AI
 }
 
 tui_refresh() {  # $1 "fetch": also ask the remotes (in the background)
-  rm -f "$TUI_DIR"/s.* "$TUI_DIR"/d.* "$TUI_DIR/sessions.done" "$TUI_DIR/fetch.done"
+  rm -f "$TUI_DIR"/s.* "$TUI_DIR"/d.* "$TUI_DIR"/u.* "$TUI_DIR"/g.* "$TUI_DIR/sessions.done" "$TUI_DIR/fetch.done"
   tui_load
   # background jobs never touch the terminal (a job holding it keeps the terminal busy after roam quits)
   ( tui_bg_sessions ) </dev/null >/dev/null 2>&1 &
@@ -440,7 +449,7 @@ read_lines() {  # $1 file → LN[] (no subshell)
 
 # ---------------------------------------------------------------- view: dashboard
 dash_preview() {  # PV[] for the selected project (cached until the selection or the data changes)
-  local key="$SEL:$COLS:${P_SEC[$SEL]-}:${P_SYNC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d)" w=$1 n=0 l i row
+  local key="$SEL:$COLS:${P_SEC[$SEL]-}:${P_SYNC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d):$([ -f "$TUI_DIR/u.$SEL" ] && echo u)" w=$1 n=0 l i row
   [ "$key" = "$PV_KEY" ] && return
   PV_KEY=$key PV=()
   case ${P_SYNC[$SEL]-} in
@@ -450,6 +459,11 @@ dash_preview() {  # PV[] for the selected project (cached until the selection or
   local IFS=$'\n'
   for l in ${P_PV[$SEL]-}; do PV[n]=$l; n=$((n + 1)); done
   unset IFS
+  # what this Mac has that was never committed: travels when parked, but isn't in the repo
+  if read_lines "$TUI_DIR/u.$SEL" && [ ${#LN[@]} -gt 0 ]; then
+    row=""; for ((i = 0; i < ${#LN[@]}; i++)); do row="$row${row:+ · }${LN[$i]}"; done
+    tfit "$row" $((w - 48)); PV[n]="${K_WARN}+${K_R} new, never committed: $FIT ${K_MUTED}· i: in the repo?${K_R}"; n=$((n + 1))
+  fi
   PV[n]=""; n=$((n + 1))
   if [ "${P_SEC[$SEL]-0}" = 1 ]; then PV[n]="${K_OK}⚿${K_R} secrets travel encrypted ${K_MUTED}· e: off${K_R}"
   else PV[n]="${K_MUTED}⚿ secrets stay on each Mac · e: travel encrypted${K_R}"; fi
@@ -504,6 +518,11 @@ EOF
     if [ $r -eq $SEL ]; then sel_row "$c" $((lw - 4)); else plain_row "$c"; fi
     PC[$i]=$REPLY
   done
+  # what the marks mean, at the bottom of the list while there's room (all of them: ?)
+  if [ $h -ge $((nv + 3)) ]; then
+    tfit "✓ clean  ● changed  + new  ↑ unpushed" $((lw - 6)); PC[$((h - 2))]="${K_DIM}$FIT${K_R}"
+    tfit "☁ parked  ≡ in sync  — not here  ? all symbols" $((lw - 6)); PC[$((h - 1))]="${K_DIM}$FIT${K_R}"
+  fi
   [ $nv -eq 0 ] && [ $NP -gt 0 ] && PC[0]="${K_MUTED}nothing matches “${FILTER}” — esc clears the filter${K_R}"
   [ $NP -eq 0 ] && PC[0]="${K_MUTED}no projects yet — a adds one${K_R}"
   if [ -n "$FILTER" ]; then panel $lw $ph "Projects /$FILTER" 1 "$nv of $NP"; else panel $lw $ph "Projects" 1 "$NP"; fi
@@ -532,7 +551,7 @@ EOF
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
   if [ -n "$PROMPT" ]; then prompt_bar "filter"
-  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs d:doctor ?:help q:quit" "$right"; fi
+  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs i:repo d:doctor ?:keys_&_symbols q:quit" "$right"; fi
 }
 
 dash_visible() {  # VIDX[] = projects whose name matches FILTER (letters in order, any case); keeps SEL on one of them
@@ -585,6 +604,7 @@ dash_key() {
     ENTER|RIGHT|l) [ ${#VIDX[@]} -gt 0 ] && proj_open 0 ;;
     s) [ ${#VIDX[@]} -gt 0 ] && proj_open 0 ;;
     v) [ ${#VIDX[@]} -gt 0 ] && proj_open 1 ;;
+    i) [ ${#VIDX[@]} -gt 0 ] && proj_open 2 ;;
     r) run_start resume ;;
     p) run_start park ;;
     d) tui_outside "Doctor" 'doctor_run; doctor_show; registry_write' ;;
@@ -637,12 +657,14 @@ proj_items() {  # LN[] = the current tab's rows
   case $PTAB in
     0) read_lines "$TUI_DIR/s.$PJ" || LN=() ;;
     1) read_lines "$TUI_DIR/d.$PJ" || LN=() ;;
-    2) LN=() ;;
+    2) [ -d "$PJ_PATH/.git" ] || { LN=(); return; }
+       [ -f "$TUI_DIR/g.$PJ" ] || repo_outside "$PJ_PATH" > "$TUI_DIR/g.$PJ"
+       read_lines "$TUI_DIR/g.$PJ" || LN=() ;;
   esac
 }
 
 proj_state() {  # PST[] = details below the list for the selected item (cached)
-  local key="$PTAB:$PSEL:$COLS:$([ -f "$TUI_DIR/s.$PJ" ] && echo 1)" row l n=0
+  local key="$PTAB:$([ "$PTAB" = 2 ] && echo "${REPO_GEN:-0}" || echo "$PSEL"):$COLS:$([ -f "$TUI_DIR/s.$PJ" ] && echo 1)" row l n=0
   [ "$key" = "$PST_KEY" ] && return
   PST_KEY=$key PST=()
   case $PTAB in
@@ -676,7 +698,7 @@ proj_draw() {
   done
   proj_items; n=${#LN[@]}
   [ $PSEL -ge $n ] && PSEL=$((n > 0 ? n - 1 : 0))
-  if [ $PTAB = 2 ]; then lh=0; else lh=$(( n + 2 )); [ $lh -lt 3 ] && lh=3; [ $lh -gt $(( (ROWS - 3) / 2 )) ] && lh=$(( (ROWS - 3) / 2 )); fi
+  lh=$(( n + 2 )); [ $lh -lt 3 ] && lh=3; [ $lh -gt $(( (ROWS - 3) / 2 )) ] && lh=$(( (ROWS - 3) / 2 ))
   dh=$(( ROWS - 2 - lh ))
   S[$top]=" $tabs"
   top=2; dh=$((dh - 1))
@@ -688,6 +710,7 @@ proj_draw() {
     for ((i = 0; i < h && i + off < n; i++)); do
       row=${LN[$((i + off))]}
       if [ $PTAB = 0 ]; then l=$(sess_line "$row" "" $((COLS - 52)))
+      elif [ $PTAB = 2 ]; then repo_row "$row"; l=$REPLY
       else l=${row#*$'\t'}; local kind=${l%%$'\t'*}; l=${l#*$'\t'}; local file=${l%%$'\t'*}; l=${l#*$'\t'}; l=${l#*$'\t'}
         tpad "${K_B}$file${K_R}" 44; l="$PAD${K_MUTED}$kind · $l lines${K_R}"; fi
       if [ $((i + off)) -eq $PSEL ]; then sel_row "$l" $((COLS - 4)); else plain_row "$l"; fi
@@ -696,10 +719,12 @@ proj_draw() {
     if [ $n -eq 0 ]; then
       if [ $PTAB = 0 ] && [ ! -f "$TUI_DIR/s.$PJ" ]; then spinner; PC[0]="$REPLY ${K_MUTED}reading sessions…${K_R}"
       elif [ $PTAB = 0 ]; then PC[0]="${K_MUTED}no Claude Code or Codex sessions for $name yet${K_R}"
+      elif [ $PTAB = 2 ]; then PC[0]="${K_MUTED}$([ -d "$PJ_PATH/.git" ] && echo "everything here is in the repo" || echo "not on this Mac")${K_R}"
       elif [ ! -f "$TUI_DIR/d.$PJ" ] && [ -d "$PJ_PATH" ]; then spinner; PC[0]="$REPLY ${K_MUTED}looking for Markdown files…${K_R}"
       else PC[0]="${K_MUTED}no Markdown files${K_R}"; fi
     fi
-    panel $COLS $lh "$([ $PTAB = 0 ] && echo "AI sessions" || echo "Files")" 1 "$n"
+    case $PTAB in 0) t="AI sessions" ;; 1) t="Files" ;; *) t="Not in the repo" ;; esac
+    panel $COLS $lh "$t" 1 "$([ $PTAB = 2 ] && echo "+ goes in with the next commit · − stays out" || echo "$n")"
     for ((i = 0; i < lh; i++)); do S[$((top + i))]=${PB[$i]}; done
     top=$((top + lh))
   fi
@@ -715,7 +740,7 @@ proj_draw() {
   case $PTAB in
     0) statusbar "SESSIONS" "⏎:read c:continue ⇥:tab ?:help esc:back" ;;
     1) statusbar "DOCS" "⏎:read o:open_in_editor ⇥:tab ?:help esc:back" ;;
-    *) statusbar "GIT" "⇥:tab ?:help esc:back" ;;
+    *) statusbar "GIT" "⏎/space:goes_in_⇄_stays_out ⇥:tab ?:help esc:back" ;;
   esac
 }
 
@@ -731,15 +756,44 @@ proj_key() {
       proj_items; row=${LN[$PSEL]-}; [ -n "$row" ] || return
       case $PTAB in
         0) reader_session "$row" ;;
+        2) repo_switch ;;
         1) row=${row#*$'\t'}; row=${row#*$'\t'}; row=${row%%$'\t'*}; reader_open "$PJ_PATH/$row" "${P_N[$PJ]} › $row" ;;
       esac ;;
+    ' ') [ $PTAB = 2 ] && repo_switch ;;
     c) [ $PTAB = 0 ] && tui_outside "" "continue_cmd '${P_N[$PJ]}' $((PSEL + 1))" ;;
     o) if [ $PTAB = 1 ]; then proj_items; row=${LN[$PSEL]-}; row=${row#*$'\t'}; row=${row#*$'\t'}; row=${row%%$'\t'*}
          [ -n "$row" ] && tui_outside "" "${EDITOR:-open} '$PJ_PATH/$row'" nopause; fi ;;
     MOUSE) proj_mouse ;;
-    ESC|q|BS) VIEW=dash ;;
+    ESC|q|BS) VIEW=dash
+      # .gitignore changed: the counts in the list and on the other Macs follow
+      [ "${REPO_TOUCHED:-0}" = 1 ] && { REPO_TOUCHED=0; registry_write; tui_quiet_refresh; } ;;
     Q) QUIT=1 ;;
   esac
+}
+
+repo_row() {  # $1 repo_outside line → REPLY: one row of the "Not in the repo" list
+  local state f src line pat
+  IFS=$'\t' read -r state f src line pat <<EOF
+$1
+EOF
+  f=${f//$'\r'/?}
+  tfit "$f" 50; tpad "$FIT" 52
+  case $state in
+    new)  REPLY="${K_WARN}+${K_R} $PAD${K_MUTED}goes in with the next commit${K_R}" ;;
+    junk) REPLY="${K_MUTED}+${K_R} $PAD${K_MUTED}macOS / sync app file — roam skips it, git would take it${K_R}" ;;
+    *)    repo_rule "$src" "$pat"; REPLY="${K_LINE}−${K_R} $PAD${K_MUTED}stays out · $REPLY${K_R}" ;;
+  esac
+}
+
+repo_switch() {  # the selected row: goes in ⇄ stays out
+  local row state f src line pat
+  proj_items; row=${LN[$PSEL]-}; [ -n "$row" ] || return
+  IFS=$'\t' read -r state f src line pat <<EOF
+$row
+EOF
+  repo_toggle "$PJ_PATH" "$state" "$f" "$src" "$line" "$pat"
+  toast "$REPLY"
+  rm -f "$TUI_DIR/g.$PJ"; REPO_GEN=$(( ${REPO_GEN:-0} + 1 )) REPO_TOUCHED=1 PST_KEY=""
 }
 
 proj_mouse() {  # wheel moves through the list; click a tab, or a row (the selected row again: open it)
@@ -754,7 +808,6 @@ proj_mouse() {  # wheel moves through the list; click a tab, or a row (the selec
            x=$((x + ${#t} + 5)); i=$((i + 1))
          done; return
        fi
-       [ "$PTAB" = 2 ] && return
        row=$((MOUSE_Y - 4 + PROJ_OFF))   # rows 3 and 4: the list's border, then its first line
        [ "$MOUSE_Y" -ge 4 ] && [ "$MOUSE_Y" -lt $((4 + PROJ_H)) ] || return
        proj_items; [ $row -lt ${#LN[@]} ] || return
@@ -952,6 +1005,14 @@ Dashboard
   c        continue newest session   d / f    doctor / fix
   n        new project               a / L    add a project / log
   y        sync this project         e        encrypted secrets on/off
+  i        what goes into the repo   ⏎ space  (Git tab) goes in ⇄ stays out
+Symbols
+  ✓        clean, all pushed         ●n       files changed
+  +n       new, never committed      ↑n       commits not pushed
+  ☁        parked on the remote      —        not cloned on that Mac
+  ≡ ≠      same on every Mac / not   ⚿        secrets travel encrypted
+  ▸ ● ○    this Mac / online / away  ◐ ●      open changes / AI running
+  ✻ ◇ ✦    Claude, Codex, Gemini     ◈ ▣      Copilot, opencode
 Reader
   space b  page down / up            / n N    search, next, previous
   ] [      next / previous heading   o        open in your editor"
@@ -959,6 +1020,7 @@ Reader
 help_draw() {
   local w=80 h i l y x n=0 lines=()
   local IFS=$'\n'; for l in $HELP; do lines[n]=$l; n=$((n + 1)); done; unset IFS
+  [ $n -gt $((ROWS - 4)) ] && n=$((ROWS - 4))   # a small terminal: the last sections (Reader) give way
   h=$((n + 2)); [ $w -gt $((COLS - 4)) ] && w=$((COLS - 4))
   y=$(( (ROWS - h) / 2 )); x=$(( (COLS - w) / 2 ))
   for ((i = 1; i < ROWS - 1; i++)); do tstrip "${S[$i]-}"; S[$i]="$K_DIM$STRIP"; done
@@ -996,7 +1058,7 @@ tui_frame() {
   fb_flush
 }
 
-tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|help: one frame on stdout, no terminal needed (tests, docs)
+tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help: one frame on stdout, no terminal needed (tests, docs)
   FILTER="${ROAM_TUI_FILTER:-}" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0
   TUI_DIR=$(mktemp -d -t roam-tui); SEL=0 BUSY="" TICKS=0 HELP_ON=0 TOAST_T=0 PROMPT="" PV_KEY="" FULL=1 PREV=() FB=""
   tui_palette; tui_size
@@ -1004,7 +1066,8 @@ tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|help: one frame on stdout, no te
   [ "$ROAM_TUI_SNAPSHOT" = load ] && { rm -rf "$TUI_DIR"; return; }
   tui_bg_sessions; now_build
   VIEW=dash NOW=$(date +%s)
-  case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; help) HELP_ON=1 ;;
+  dash_visible   # ROAM_TUI_FILTER picks the project
+  case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; repo) proj_open 2 ;; help) HELP_ON=1 ;;
     esac
   S=()
   case $VIEW in dash) dash_draw ;; proj) proj_draw ;; esac

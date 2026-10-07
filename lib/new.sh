@@ -142,3 +142,107 @@ new_project() {  # $1 optional: name, or path of an existing folder
   echo
   printf '  %s %s%s is ready.%s %s%s%s\n' "$I_OK" "$C_BOLD" "$name" "$C_RESET" "$C_MUTED" "$(short_path "$dir")" "$C_RESET"
 }
+
+# ---------------------------------------------------------------- what goes into the repo
+# Whatever in a project isn't committed is either new — it goes into the repo with the next commit — or
+# stays out: a rule in a .gitignore, in .git/info/exclude or in your global ignore file says so. roam
+# switches a file or folder between the two by editing the project's .gitignore, and nothing else.
+repo_outside() {  # $1 project path → "state<TAB>path<TAB>rule file<TAB>line<TAB>pattern" per line
+  # state: new (goes in with the next commit), junk (macOS or sync-app file — roam skips it, git doesn't),
+  # out (stays out). Folders end in /. New first, then junk, then out; each sorted by path.
+  ( cd "$1" 2>/dev/null || exit 0
+    # a folder holding nothing but .DS_Store isn't new work: junk is looked at file by file
+    st=$(git status --porcelain -z --ignored --untracked-files=normal -- . "${JUNK[@]}" 2>/dev/null | tr '\0' '\n')
+    printf '%s\n' "$st" | sed -n 's/^?? //p' | sort | while IFS= read -r f; do [ -n "$f" ] && printf 'new\t%s\t\t\t\n' "$f"; done
+    git ls-files --others --exclude-standard -z 2>/dev/null | tr '\0' '\n' | sort |
+      while IFS= read -r f; do [ -n "$f" ] && is_junk "$f" && printf 'junk\t%s\t\t\t\n' "$f"; done
+    printf '%s\n' "$st" | sed -n 's/^!! //p' | grep . | sort | tr '\n' '\0' |
+      git check-ignore -v -z --no-index --stdin 2>/dev/null | tr '\0' '\n' |
+      while IFS= read -r src && IFS= read -r line && IFS= read -r pat && IFS= read -r f; do
+        printf 'out\t%s\t%s\t%s\t%s\n' "$f" "$src" "$line" "$pat"
+      done
+    exit 0 )
+}
+
+repo_rule() {  # $1 rule file, $2 pattern → REPLY: where the rule lives, in words
+  case $1 in
+    .gitignore|*/.gitignore) REPLY="$1: $2" ;;
+    *info/exclude) REPLY="this repo's info/exclude: $2" ;;
+    *) REPLY="your global ignore file: $2" ;;
+  esac
+}
+
+gitignore_add() {  # $1 .gitignore, $2 line — on a line of its own, also when the file ends without a newline
+  [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ] && echo >> "$1"
+  printf '%s\n' "$2" >> "$1"
+}
+
+repo_toggle() {  # $1 project path, then one repo_outside line (state, path, rule file, line, pattern) → REPLY; 1: unchanged
+  local p=$1 state=$2 f=$3 src=${4:-} line=${5:-} pat=${6:-} gi="$1/.gitignore" keep had=0 changed n rel
+  REPLY=""
+  keep=$(mktemp); [ -f "$gi" ] && { had=1; cp -p "$gi" "$keep"; }
+  changed=$gi
+  case $state in
+    new|junk)
+      if [ "$state" = junk ]; then
+        # by name, anywhere: Finder leaves the next one in another folder tomorrow
+        n=${f%/}; n=${n##*/}; case $n in $'Icon\r') n='Icon?' ;; esac
+        gitignore_add "$gi" "$n"
+      else
+        # exactly this path, from the project's root; [ * ? \ taken literally, a leading # or ! too
+        n=$(printf '%s' "$f" | sed 's/[][*?\\]/\\&/g; s/^[#!]/\\&/')
+        gitignore_add "$gi" "/$n"
+      fi
+      if git -C "$p" check-ignore -q --no-index -- "$f"; then
+        REPLY="${f%/} stays out of the repo — .gitignore changed, commit it"; rm -f "$keep"; return 0
+      fi ;;
+    out)
+      rel=$f; case $src in */.gitignore) rel=${f#"${src%.gitignore}"} ;; esac
+      n=${pat#/}; n=${n%/}
+      if case $src in .gitignore|*/.gitignore) true ;; *) false ;; esac && [ "$n" = "${rel%/}" ] && [ -n "$line" ]; then
+        # the rule names exactly this: take it out
+        changed="$p/$src"; [ "$src" = .gitignore ] || cp -p "$changed" "$keep"
+        sed -i '' "${line}d" "$changed"
+      else
+        # a broader rule (*.log, build/) or one outside the project: an exception for this path
+        n=$(printf '%s' "$f" | sed 's/[][*?\\]/\\&/g')
+        gitignore_add "$gi" "!/$n"
+      fi
+      if ! git -C "$p" check-ignore -q --no-index -- "$f"; then
+        REPLY="${f%/} goes into the repo with your next commit — .gitignore changed, commit it"; rm -f "$keep"; return 0
+      fi
+      repo_rule "$src" "$pat"
+      REPLY="git can't take ${f%/} in while a folder above it stays out ($REPLY) — nothing changed" ;;
+  esac
+  # didn't work: everything back as it was
+  if [ "$changed" != "$gi" ] || [ $had = 1 ]; then cp -p "$keep" "$changed"; else rm -f "$gi"; fi
+  rm -f "$keep"
+  [ -n "$REPLY" ] || REPLY="${f%/}: nothing changed"
+  return 1
+}
+
+ignore_cmd() {  # [project] [path] — what isn't in the repo; with a path: switch it between "goes in" and "stays out"
+  local rows row state f src line pat
+  pick_project "${1:-}" "Which project?" || return 1
+  [ -d "$P_PATH/.git" ] || { say_err "$P_NAME isn't on this Mac"; return 1; }
+  rows=$(repo_outside "$P_PATH")
+  if [ -z "${2:-}" ]; then
+    header "$P_NAME" "what isn't in the repo"; echo
+    [ -n "$rows" ] || { say_ok "everything here is in the repo"; return 0; }
+    printf '%s\n' "$rows" | while IFS="$TAB" read -r state f src line pat; do
+      case $state in
+        new)  printf '  %s+%s %s %s· goes in with the next commit%s\n' "$C_WARN" "$C_RESET" "$f" "$C_MUTED" "$C_RESET" ;;
+        junk) printf '  %s+%s %s %s· macOS or sync-app file: roam skips it, git would take it%s\n' "$C_MUTED" "$C_RESET" "$(printf '%s' "$f" | tr '\r' '?')" "$C_MUTED" "$C_RESET" ;;
+        out)  repo_rule "$src" "$pat"; printf '  %s−%s %s %s· stays out · %s%s\n' "$C_LINE" "$C_RESET" "$f" "$C_MUTED" "$REPLY" "$C_RESET" ;;
+      esac
+    done
+    printf '\n  %sswitch one between "goes in" and "stays out": roam ignore %s <path>%s\n' "$C_MUTED" "$P_NAME" "$C_RESET"
+    return 0
+  fi
+  row=$(printf '%s\n' "$rows" | awk -F'\t' -v f="${2%/}" '{ p = $2; sub(/\/$/, "", p) } p == f { print; exit }')
+  [ -n "$row" ] || { say_err "${2%/} isn't outside the repo — committed files stay in (git rm --cached takes one out)"; return 1; }
+  IFS="$TAB" read -r state f src line pat <<ROW
+$row
+ROW
+  if repo_toggle "$P_PATH" "$state" "$f" "$src" "$line" "$pat"; then say_ok "$P_NAME: $REPLY"; else say_err "$P_NAME: $REPLY"; return 1; fi
+}

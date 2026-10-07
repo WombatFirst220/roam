@@ -11,6 +11,7 @@
 #          | info (worth knowing, never counted as a problem)
 
 DOCTOR_FILE="$CACHE/doctor.tsv"
+OFFLINE_HOWTO="make the pool folder available offline in your sync app (iCloud Drive: Keep Downloaded · kDrive, OneDrive, Dropbox: Make available offline · Google Drive: Available offline)"
 # ignored paths no Mac needs to hand over: build output, dependencies, editor state
 NOISE='(^|/)(build|DerivedData|node_modules|\.build|\.swiftpm|xcuserdata|\.DS_Store|\.temp|\.branches|out|dist|\.next|\.pgdata|Pods|\.gradle|\.idea|\.vscode|__pycache__|\.venv|coverage|\.cache)(/|$)|\.xcuserstate$|\.xcuserdatad/?$|\.log$|(^|/)\.claude/settings\.local\.json$'
 
@@ -89,6 +90,17 @@ local_files() {  # ignored but present files of a project, without build noise
 
 xcode_projects() { find "$1" -maxdepth 4 -name project.pbxproj -not -path '*/node_modules/*' -not -path '*/.build/*' -not -path '*/build/*' 2>/dev/null; }
 
+synced_by() {  # $1 folder → the sync app whose folder holds it, if any (a function: bash 3.2 mis-parses case inside $( ))
+  local here l d
+  here="$(cd "$1" 2>/dev/null && pwd -P)/"
+  while IFS="$TAB" read -r l d; do
+    [ -n "$d" ] || continue
+    case $here in "$(cd "$d" 2>/dev/null && pwd -P)/"*) echo "$l"; return ;; esac
+  done <<EOF
+$(sync_folders)
+EOF
+}
+
 check_mac() {
   local v
   if have git && xcode-select -p >/dev/null 2>&1; then res ok "This Mac" "Git $(git --version | awk '{print $3}')"
@@ -98,7 +110,15 @@ check_mac() {
   # Files the sync app holds online only (a size, no blocks on disk): reading one can hang, or hand out NUL bytes.
   # stat doesn't download anything.
   v=$( { find "$POOL" -type f -size +0c -print0 2>/dev/null | xargs -0 stat -f %b 2>/dev/null; } | grep -c '^0$')
-  [ "${v:-0}" -gt 0 ] && res hint "This Mac" "$v file$([ "$v" = 1 ] || echo s) in the pool $([ "$v" = 1 ] && echo is || echo are) online only on this Mac" "" "make the pool folder available offline in your sync app (kDrive: Make available offline · iCloud Drive: Keep Downloaded)"
+  [ "${v:-0}" -gt 0 ] && res hint "This Mac" "$v file$([ "$v" = 1 ] || echo s) in the pool $([ "$v" = 1 ] && echo is || echo are) online only on this Mac" "" "$OFFLINE_HOWTO"
+  # copies a sync app keeps when two Macs wrote one file at once: roam leaves them alone, you decide
+  v=$(find "$POOL" -type f 2>/dev/null | grep -i -E "$COPY_RE" | grep -v -F -e "/sessions/" -e "/macs/" -e "/requests/" -e "/answers/")
+  [ -n "$v" ] && res hint "This Mac" "$(printf '%s\n' "$v" | grep -c .) cop$([ "$(printf '%s\n' "$v" | grep -c .)" = 1 ] && echo y || echo ies) your sync app set aside in the pool, e.g. $(short_path "$(printf '%s\n' "$v" | head -1)")" "" \
+    "roam never uses them — compare with the file next to it, keep what you need, delete the copy"
+  # a projects folder the sync app syncs as well: two syncs fight over .git, and files offloaded to the cloud look deleted to git
+  v=$(synced_by "$PROJECTS_DIR")
+  [ -n "$v" ] && res hint "This Mac" "the projects folder $(short_path "$PROJECTS_DIR") is inside $v" "" \
+    "move it out (roam setup) — git and $v both syncing .git breaks repos, and files kept online only look deleted to git"
   if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then res ok "This Mac" "Auto-park every $INTERVAL min"
   else res missing "This Mac" "Auto-park is not running" "roam setup"; fi
   have roam && res ok "This Mac" "roam on PATH" || res hint "This Mac" "roam is not on PATH" "" "add  export PATH=\"\$HOME/.local/bin:\$PATH\"  to ~/.zshrc"

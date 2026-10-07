@@ -44,7 +44,7 @@ That's it — on every Mac. Updates: `brew update && brew upgrade wombatfirst220
 
 | | Step | What happens |
 |---|---|---|
-| 1 | **Pool** | finds an existing pool in iCloud Drive, Dropbox, kDrive, Nextcloud or `~/Library/CloudStorage` — or creates one |
+| 1 | **Pool** | finds an existing pool in iCloud Drive, Dropbox, kDrive, Nextcloud, Synology Drive, pCloud or `~/Library/CloudStorage` (OneDrive, Google Drive, Box …) — or creates one |
 | 2 | **Projects folder** | `~/Developer` by default, the same path on every Mac |
 | 3 | **Git access** | checks your remotes; creates an SSH key, copies it and opens GitHub's key page if needed |
 | 4 | **Projects** | picks up repos you already have, offers your GitHub repos (with `gh`), or takes any git URL |
@@ -85,12 +85,12 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.8.0                                                                               14:02
-╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
-│ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
+ ◆ roam  v1.8.1                                                                               14:02
+╭─ Projects ─────────────────────────── 4 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
+│ ❯ MyApp          feature… ●3 +1 ☁ ✻ 2m ● ││ Mac mini          feature/login ●3 +1 ☁              │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
 │   Backend        main ↑2                 ││ ☁ parked here · 2m ago · feature/login               │
-│                                          ││                                                      │
+│   Docs           main +1                 ││ + new, never committed: docs/notes.md · i: in the r… │
 │                                          ││ ⚿ secrets travel encrypted · e: off                  │
 │                                          ││                                                      │
 │                                          ││ AI sessions                                          │
@@ -100,10 +100,10 @@ Just type `roam`:
 │                                          ││     you     also cover the expired token case        │
 │                                          ││                                                      │
 │                                          ││ Docs                                                 │
-│                                          ││ README.md · CLAUDE.md · CHANGELOG.md · docs/api.md   │
+│ ✓ clean  ● changed  + new  ↑ unpushed    ││ README.md · CLAUDE.md · CHANGELOG.md · docs/api.md   │
 ╰──────────────────────────────────────────╯╰──────────────────────────────────────────────────────╯
 ╭─ Now ──────────────────────────────────────────────────────────────────────────── 3 in progress ─╮
-│ ● Mac mini        MyApp           ✻ Claude ● running   ●4 changed                                │
+│ ● Mac mini        MyApp           ✻ Claude ● running   ●3 changed   +1 new                       │
 │ ◐ MacBook Pro     Website         ◇ Codex · 1h ago                                               │
 │ ◐ MacBook Pro     Backend         ●2 changed                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
@@ -111,11 +111,29 @@ Just type `roam`:
 │ ▸ Mac mini             this Mac     macOS 26.1   Xcode 26.1   ✓ ready                            │
 │ ● MacBook Pro          online       macOS 26.1   Xcode 26.1   ✗ 1 missing                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- ROAM   ⏎ open  / filter  r resume  p park  s sessions  v docs  ? help  q quit    ⠹ checking the remotes…
+ ROAM   ⏎ open  / filter  r resume  p park  y sync  s sessions  v docs  i repo  ? keys & symbols  q quit
 ```
 
 Every Mac reports its state to the pool, so you see your other Macs even while they sleep. The app
 opens at once with what the pool knows and asks the remotes in the background.
+
+| Mark | Means |
+|---|---|
+| `✓` | clean: nothing changed, everything pushed |
+| `●4` | 4 files changed that are in the repo |
+| `+2` | 2 files or folders that were never committed — they travel when parked, but aren't in the repo |
+| `↑2` | 2 commits not pushed yet |
+| `☁` | work parked on the remote (violet: from this Mac, yellow: from another one — `r` takes it) |
+| `≡` / `≠` | the same on every Mac / not — `y` syncs |
+| `—` | not cloned on that Mac |
+| `⚿` | secrets travel encrypted |
+| `▸ ● ○` | this Mac · online · away |
+| `● ◐` in **Now** | an AI session running · open changes or a session in the last two hours |
+| `✻ ◇ ✦ ◈ ▣` | Claude Code · Codex · Gemini CLI · Copilot CLI · opencode |
+
+The list shows the short form at its bottom, **?** all of them. What macOS and sync apps leave in every
+folder — `.DS_Store`, `._*`, `Icon`, iCloud's `.<name>.icloud`, Dropbox's `.dropbox` and the like — never
+counts: not as a change, not in a snapshot, not in the in-sync check.
 
 **≡** next to a project means *in sync*: every Mac has the same branch, commit and working tree,
 uncommitted and untracked files included. **y** (or `roam sync MyApp`) gets it there: this Mac parks,
@@ -129,7 +147,12 @@ the last two hours or open changes on a Mac that is online (◐). It stays curre
 minutes.
 
 - **⏎** opens a project: **Sessions** (where each AI session stopped, `⏎` reads it, `c` continues it),
-  **Docs** (README, CLAUDE.md, … with a preview, `⏎` reads it, `o` opens your editor) and **Git**.
+  **Docs** (README, CLAUDE.md, … with a preview, `⏎` reads it, `o` opens your editor) and **Git**:
+  everything that isn't in the repo, new (`+`, goes in with the next commit) or staying out (`−`, with
+  the rule that keeps it out). `⏎` or `space` switches one: roam adds a line to the project's `.gitignore`
+  or takes one out — `.DS_Store` and friends by name, so every folder is covered; for a broader rule like
+  `*.log` it adds an exception (`!/keep.log`). Commit the `.gitignore` like any change. **i** on the
+  dashboard opens this tab directly, `roam ignore` does the same on the command line.
   `⇥` or `1`–`3` switch tabs, `esc` goes back.
 - **r** resume and **p** park right in the app: one row per project, a spinner while it runs, ✓ or ✗ with
   the details when it's done — and a progress bar, in the tab too where the terminal shows one (Ghostty,
@@ -214,12 +237,14 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam setup` | set up or repair this Mac |
 | `roam sync [project]` | one project in the same state on every Mac: parks it here, asks the other Macs to sync it, takes what they had |
 | `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
+| `roam ignore [project] [path]` | what isn't in the repo; with a path: switch it between "goes in" and "stays out" (edits `.gitignore`) |
 | `roam leave` | take this Mac out of the pool |
 
 ## How it works
 
 roam has no server. It uses two things you already have: your **git remote** and a **folder your
-Macs sync** (iCloud Drive, Dropbox, kDrive, a network share — any will do). Keep the pool folder
+Macs sync** (iCloud Drive, OneDrive, Dropbox, Google Drive, kDrive, Nextcloud, a network share — any
+will do). Keep the pool folder
 available offline on every Mac: files a sync app holds online only can block a read or arrive as NUL
 bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and `roam doctor` warns.
 
@@ -275,7 +300,7 @@ Without any configuration, by looking at your projects:
 
 | Found in a project | Checked |
 |---|---|
-| always | git, remote reachable, pool writable and available offline, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions and memory the sync app left empty |
+| always | git, remote reachable, pool writable and available offline, conflict copies your sync app set aside in the pool, a projects folder that a sync app syncs as well, auto-park running, Homebrew, Claude Code, jq, Claude Code sessions and memory the sync app left empty |
 | `*.xcodeproj` | full Xcode, first-launch setup, iOS Simulator, iOS SDK ≥ highest `IPHONEOS_DEPLOYMENT_TARGET`, a signing certificate for every `DEVELOPMENT_TEAM` |
 | `package.json` | Node, installed packages (`npm ci` / `pnpm` / `yarn` by lockfile) |
 | `supabase/config.toml` · `deno.json` · `docker-compose.yml` | Supabase CLI · Deno · Docker |
@@ -341,7 +366,15 @@ the other Macs, 90), `ROAM_HEARTBEAT` (how often a Mac refreshes its "seen", 360
   just switched off still shows as online for up to about 75 minutes. `roam sync` asks it anyway; it
   answers when it's back, within 30 minutes, or the request lapses.
 - **Sync apps:** keep the pool folder available offline. roam writes pool files in place (a temp file
-  plus rename made kDrive set files aside as `…_blacklisted_…`) and ignores such set-aside copies.
+  plus rename made kDrive set files aside as `…_blacklisted_…`). When two Macs write one file at once,
+  sync apps keep a copy next to it — iCloud `A 2.txt`, Dropbox and Nextcloud `A (… conflicted copy …)`,
+  Google Drive `A (1).txt`, OneDrive `A-<computer>.txt`, kDrive `…_blacklisted_…`. roam never takes
+  such a copy for the real thing: a Mac's status file counts only when its name and its `mac=` line
+  agree, and copies of Claude Code files stay in the pool, where `roam doctor` points them out.
+  Pool paths with spaces (`Mobile Documents`, `My Drive`, `OneDrive - Company`) work everywhere —
+  `roam sync` didn't before 1.8.1.
+- **Keep your projects outside the sync folder** (`~/Developer` is the default): a sync app and git
+  syncing the same `.git` break repos, and files kept online only look deleted to git. `roam doctor` warns.
 - A **running** Claude Code session doesn't move. End it, `roam resume` on the other Mac, then
   `claude --resume`.
 - Session transcripts contain everything a session saw. Don't want them in your sync folder?

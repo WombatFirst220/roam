@@ -15,12 +15,13 @@
 #   roam read [project] [file] the project's README, CLAUDE.md, docs … in the reader
 #   roam sync [project]        one project in the same state on every Mac (asks the other Macs too)
 #   roam undo [project]        back to how it was before the last resume (undo works twice, too)
+#   roam ignore [project] [path]  what isn't in the repo; with a path: it goes in ⇄ it stays out (.gitignore)
 #   roam leave        take this Mac out of the pool
 #   roam auto         background run (LaunchAgent): park, report, never touch your files
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.8.0
+ROAM_VERSION=1.8.1
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -148,7 +149,7 @@ lock() {
 usage() {
   header "v$ROAM_VERSION" ""
   printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
-  sed -n '4,19p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  sed -n '4,20p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
 
@@ -190,6 +191,7 @@ case $CMD in
   read)    need_pool; read_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
   undo)    need_pool; undo_cmd "${2:-}" || ERRORS=1 ;;
   sync)    need_pool; sync_cmd "${2:-}" || ERRORS=1 ;;
+  ignore)  need_pool; ignore_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
   version|--version|-v) echo "roam $ROAM_VERSION" ;;
   help|-h|--help) usage ;;
   *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;

@@ -49,7 +49,7 @@ claude_move() {  # $1 old project path, $2 new: take Claude Code history and mem
 sync_folders() {  # known sync folders on this Mac: "label<TAB>path"
   local d
   [ -d "$HOME/Library/Mobile Documents/com~apple~CloudDocs" ] && printf 'iCloud Drive\t%s\n' "$HOME/Library/Mobile Documents/com~apple~CloudDocs"
-  for d in "$HOME/kDrive" "$HOME/Dropbox" "$HOME/Nextcloud" "$HOME/Library/CloudStorage"/*; do
+  for d in "$HOME/kDrive" "$HOME/Dropbox" "$HOME/Nextcloud" "$HOME/SynologyDrive" "$HOME/pCloud Drive" "$HOME/Seafile" "$HOME/Library/CloudStorage"/*; do
     [ -d "$d" ] || continue
     case $d in */CloudStorage/iCloud*) continue ;; esac
     printf '%s\t%s\n' "$(basename "$d" | sed 's/-/ /')" "$d"
@@ -199,7 +199,7 @@ setup() {
   say_info "Seven quick steps. ⏎ takes the suggestion in (parentheses)."
 
   # ------------------------------------------------------------ 1. pool
-  step 1 "Pool" "A pool is a folder all your Macs sync — iCloud Drive, Dropbox, kDrive, a network share.
+  step 1 "Pool" "A pool is a folder all your Macs sync — iCloud Drive, OneDrive, Dropbox, Google Drive, kDrive, Nextcloud, a network share.
   It holds the project list, each Mac's status and (optionally) Claude Code data. Never your code."
   if [ -z "$target" ] && [ -n "$POOL" ] && [ -f "$POOL/projects.conf" ]; then
     say_info "This Mac belongs to $(short_path "$POOL")"

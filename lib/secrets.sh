@@ -19,7 +19,7 @@ age_ensure_key() {
   mkdir -p "$(dirname "$AGE_KEY")" && ( umask 077; age-keygen -o "$AGE_KEY" >/dev/null 2>&1 )
 }
 age_recipients() {  # every key the Macs in the pool published, and this Mac's own
-  { age_pub; for f in $(mac_files); do val age "$f"; done; } | grep '^age1' | sort -u
+  { age_pub; mac_files | while IFS= read -r f; do val age "$f"; done; } | grep '^age1' | sort -u
 }
 secrets_on() {  # $1 project name: do its secrets travel?
   [ "$CARRY_SECRETS" = 1 ] && return 0
