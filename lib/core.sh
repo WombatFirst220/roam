@@ -300,6 +300,33 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
   fi
 }
 
+carry_onto_ours() {  # $1 name, $2 foreign snapshot, $3 its commit (behind ours), $4 its Mac, $5 branch
+  local name=$1 sha=$2 base=$3 from=$4 branch=$5 g here out tree conflicts n
+  g=$(git rev-parse --git-dir)
+  n=$(git rev-list --count "$base..HEAD")
+  n="$n commit$([ "$n" = 1 ] || echo s)"
+  # what the other Mac changed since its commit, merged into what's here (commits and open work)
+  here=$(echo "roam $MAC here" | git commit-tree "$(worktree_tree)" -p HEAD) || { report err "$name" "couldn't read the working directory"; return; }
+  out=$(git merge-tree --write-tree --name-only --merge-base="$base" "$here" "$sha" 2>/dev/null)
+  case $? in 0|1) ;; *) report err "$name" "$(mac_label "$from") is $n behind, and git can't put its open work on top of yours — compare: git diff refs/remotes/roam/$from^ refs/remotes/roam/$from"; return ;; esac
+  tree=$(printf '%s\n' "$out" | head -1)
+  conflicts=$(printf '%s\n' "$out" | awk 'NR > 1 && $0 == "" { exit } NR > 1')
+  if [ "$tree" = "$(git rev-parse "$here^{tree}")" ]; then
+    printf '%s\n' "$sha" > "$g/roam-applied"
+    report ok "$name" "$(mac_label "$from") is $n behind — its open work is here already; it catches up with its next resume"
+    return
+  fi
+  backup_here "before resuming from $from" || { report err "$name" "couldn't back up the working directory — nothing taken over"; return; }
+  git read-tree -u --reset "$tree" && git reset -q || { report err "$name" "couldn't restore the working directory"; return; }
+  printf '%s\n' "$sha" > "$g/roam-applied"
+  if [ -n "$conflicts" ]; then
+    printf '%s\n' "$conflicts" > "$g/roam-conflicts"
+    report err "$name" "$(mac_label "$from")'s open work (it is $n behind) collides with yours: $(printf '%s\n' "$conflicts" | head -3 | tr '\n' ' ')— resolve the <<<<<<< markers, then roam park. Back: roam undo"
+  else
+    report ok "$name" "$(mac_label "$from") is $n behind — its open work is now on top of yours · $branch · back: roam undo"
+  fi
+}
+
 resume_project() {  # $1 name
   local name=$1 g foreign sha time from branch own known target applied head
   g=$(git rev-parse --git-dir)
@@ -329,6 +356,10 @@ resume_project() {  # $1 name
   target=$(git rev-parse "$sha^")
   if [ "$branch" != "-" ] && git show-ref -q --verify "refs/heads/$branch" &&
      ! git merge-base --is-ancestor "refs/heads/$branch" "$target"; then
+    # The other Mac is only behind (its commit is in ours): its open work goes on top of our newer commits
+    if [ "$(git symbolic-ref --short -q HEAD)" = "$branch" ] && git merge-base --is-ancestor "$target" HEAD; then
+      carry_onto_ours "$name" "$sha" "$target" "$from" "$branch"; return
+    fi
     report err "$name" "$branch has commits here that $(mac_label "$from")'s snapshot lacks. Look: git log --oneline $branch...refs/remotes/roam/$from^"
     return
   fi

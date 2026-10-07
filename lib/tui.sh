@@ -244,7 +244,7 @@ EOF
 tui_load() {  # projects and Macs from the pool's registry (fetch_everything rewrites this Mac's entry), work in flight from git
   local name dir remote extra f m i j k v l line sha time from br g applied now
   now=$(date +%s)
-  NP=0 P_N=() P_D=() P_SEC=() P_SYNC=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
+  NP=0 P_N=() P_D=() P_SEC=() P_SYNC=() P_LAG=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
     P_N[NP]=$name P_D[NP]=$dir P_SEC[NP]=0
@@ -283,9 +283,9 @@ EOF
     M_LINE[j]="$dot $v$PAD${K_MUTED}macOS ${macos:-–}   Xcode ${xcode:-–}${K_R}   $d"
   done
   # in sync: the same branch, commit and working tree on every Mac that has the project (see sync_verdict)
-  local b h t first n diff unk _d _a _p
+  local b h t first n diff unk _d _a _p heads
   for ((i = 0; i < NP; i++)); do
-    first="" n=0 diff=0 unk=0
+    first="" n=0 diff=0 unk=0 heads=""
     for ((j = 0; j < NM; j++)); do
       IFS=$'\t' read -r b _d _a _p h t <<EOF
 ${ST[$((j * NP + i))]-}
@@ -293,8 +293,12 @@ EOF
       { [ -z "$b" ] || [ "$b" = missing ]; } && continue
       { [ -z "$t" ] || [ "$t" = - ]; } && { unk=1; continue; }
       n=$((n + 1)); [ $n = 1 ] && first="$b $h $t"; [ "$b $h $t" != "$first" ] && diff=1
+      if [ "${M_ID[$j]}" = "$MAC" ]; then k="this Mac"; else k=${M_LABEL[$j]}; fi
+      heads="$heads$k"$'\t'"$b"$'\t'"$h"$'\n'
     done
-    P_SYNC[i]=""; [ $diff = 1 ] && P_SYNC[i]=differs; [ $diff = 0 ] && [ $unk = 0 ] && [ $n -ge 2 ] && P_SYNC[i]=sync
+    P_SYNC[i]="" P_LAG[i]=""; [ $diff = 1 ] && P_SYNC[i]=differs; [ $diff = 0 ] && [ $unk = 0 ] && [ $n -ge 2 ] && P_SYNC[i]=sync
+    # who is behind: a few git calls, only for projects that differ
+    [ $diff = 1 ] && P_LAG[i]=$(printf '%s' "$heads" | sync_lag "$PROJECTS_DIR/${P_D[$i]}")
   done
   for ((i = 0; i < NP; i++)); do
     line="" P_CELL[i]="${K_MUTED}?${K_R}"
@@ -454,7 +458,8 @@ dash_preview() {  # PV[] for the selected project (cached until the selection or
   PV_KEY=$key PV=()
   case ${P_SYNC[$SEL]-} in
     sync) PV[n]="${K_OK}≡ in sync${K_R} ${K_MUTED}· the same on every Mac${K_R}"; n=$((n + 1)) ;;
-    differs) PV[n]="${K_WARN}≠ not in sync${K_R} ${K_MUTED}· y brings every Mac to the same state${K_R}"; n=$((n + 1)) ;;
+    differs) tfit "${P_LAG[$SEL]:-the Macs differ}" $((w - 20)); PV[n]="${K_WARN}≠ not in sync${K_R} ${K_MUTED}·${K_R} $FIT"; n=$((n + 1))
+             PV[n]="  ${K_ACC}y${K_R} ${K_MUTED}brings every Mac to the same state${K_R}"; n=$((n + 1)) ;;
   esac
   local IFS=$'\n'
   for l in ${P_PV[$SEL]-}; do PV[n]=$l; n=$((n + 1)); done
@@ -504,7 +509,7 @@ dash_draw() {
     r=${VIDX[$((i + off))]}
     tfit "${P_N[$r]}" 14; tpad "${K_B}$FIT${K_R}" 15
     local c="$PAD${P_CELL[$r]}"
-    [ "${P_SYNC[$r]-}" = sync ] && c="$c ${K_OK}≡${K_R}"
+    case ${P_SYNC[$r]-} in sync) c="$c ${K_OK}≡${K_R}" ;; differs) c="$c ${K_MUTED}≠${K_R}" ;; esac
     if [ -f "$TUI_DIR/s.$r" ] && read_lines "$TUI_DIR/s.$r" && [ ${#LN[@]} -gt 0 ]; then
       local _m _s tool _i upd _b _n live _rest icon
       IFS=$'\t' read -r _m _s tool _i upd _b _n live _rest <<EOF
@@ -521,7 +526,7 @@ EOF
   # what the marks mean, at the bottom of the list while there's room (all of them: ?)
   if [ $h -ge $((nv + 3)) ]; then
     tfit "✓ clean  ● changed  + new  ↑ unpushed" $((lw - 6)); PC[$((h - 2))]="${K_DIM}$FIT${K_R}"
-    tfit "☁ parked  ≡ in sync  — not here  ? all symbols" $((lw - 6)); PC[$((h - 1))]="${K_DIM}$FIT${K_R}"
+    tfit "☁ parked  ≡ in sync  ≠ not  — not here  ? all" $((lw - 6)); PC[$((h - 1))]="${K_DIM}$FIT${K_R}"
   fi
   [ $nv -eq 0 ] && [ $NP -gt 0 ] && PC[0]="${K_MUTED}nothing matches “${FILTER}” — esc clears the filter${K_R}"
   [ $NP -eq 0 ] && PC[0]="${K_MUTED}no projects yet — a adds one${K_R}"

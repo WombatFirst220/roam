@@ -69,6 +69,29 @@ sync_verdict() {  # stdin: one project state per Mac → "sync", "differs" or no
     { k = $1 FS $5 FS $6; n++; if (n == 1) first = k; else if (k != first) diff = 1 }
     END { if (diff) print "differs"; else if (n >= 2 && !unknown) print "sync" }'
 }
+sync_lag() {  # $1 project path; stdin: "<Mac label>\t<branch>\t<HEAD>" per Mac → what differs, in a few words
+  local p=$1 lines heads top h ok l n found=""
+  lines=$(grep .)
+  if [ "$(printf '%s\n' "$lines" | cut -f2 | sort -u | grep -c .)" -gt 1 ]; then
+    printf '%s\n' "$lines" | awk -F'\t' '{ printf "%s%s on %s", (NR > 1 ? " · " : ""), $1, $2 }'; return
+  fi
+  heads=$(printf '%s\n' "$lines" | cut -f3 | sort -u)
+  [ "$(printf '%s\n' "$heads" | grep -c .)" = 1 ] && { echo "same commit, different open work"; return; }
+  [ -d "$p/.git" ] || return 0
+  # the newest commit: every other Mac's is contained in it
+  for top in $heads; do
+    ok=1
+    for h in $heads; do git -C "$p" merge-base --is-ancestor "$h" "$top" 2>/dev/null || { ok=0; break; }; done
+    [ $ok = 1 ] && { found=$top; break; }
+  done
+  [ -n "$found" ] || { echo "the Macs have different commits"; return; }
+  printf '%s\n' "$lines" | while IFS="$TAB" read -r l _ h; do
+    [ "$h" = "$found" ] && continue
+    n=$(git -C "$p" rev-list --count "$h..$found" 2>/dev/null) || continue
+    printf '%s is %s commit%s behind\n' "$l" "$n" "$([ "$n" = 1 ] || echo s)"
+  done | awk '{ printf "%s%s", (NR > 1 ? " · " : ""), $0 }'
+}
+
 sync_state() {  # $1 project → sync_verdict from the pool's status files
   local f
   mac_files | while IFS= read -r f; do sed -n "s/^project=$1$TAB//p" "$f" | head -1; done | sync_verdict

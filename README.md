@@ -124,7 +124,7 @@ opens at once with what the pool knows and asks the remotes in the background.
 | `+2` | 2 files or folders that were never committed — they travel when parked, but aren't in the repo |
 | `↑2` | 2 commits not pushed yet |
 | `☁` | work parked on the remote (violet: from this Mac, yellow: from another one — `r` takes it) |
-| `≡` / `≠` | the same on every Mac / not — `y` syncs |
+| `≡` / `≠` | the same on every Mac / not — the preview says who is behind (*MacBook is 2 commits behind*), `y` syncs |
 | `—` | not cloned on that Mac |
 | `⚿` | secrets travel encrypted |
 | `▸ ● ○` | this Mac · online · away |
@@ -140,7 +140,9 @@ uncommitted and untracked files included. **y** (or `roam sync MyApp`) gets it t
 every other Mac that is online gets a request through the pool — it parks, resumes (merging if both
 sides changed) and answers — and this Mac takes over the result. A Mac picks a request up at once, as
 launchd watches the pool's `requests/<Mac>` folder (otherwise within the auto-park interval); requests
-older than 30 minutes are dropped, and a Mac that synced on request shows a notification.
+older than 30 minutes are dropped, and a Mac that synced on request shows a notification. It works from
+either side: when the Mac that takes over is ahead and the other one only lacks commits, roam puts that
+Mac's open work on top of the newer commits instead of refusing — or says it's there already.
 
 **Now** shows where work is going on at the moment, on every Mac: a running AI session (●), one from
 the last two hours or open changes on a Mac that is online (◐). It stays current by itself, every two

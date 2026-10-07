@@ -918,6 +918,51 @@ t_help_explains_the_symbols() {
   case $OUT in *Symbols*"new, never committed"*"parked on the remote"*) ;; *) fail "no symbols in the help"; return 1 ;; esac
 }
 
+# ---------------------------------------------------------------- a Mac that is behind
+commit_on() {  # $1 Mac, $2 file — a commit there, pushed
+  ( cd "$T/$1/dev/App" && echo "$2" > "$2" && git add "$2" && git -c user.name=t -c user.email=t@t commit -qm "$2" && git push -q origin HEAD:main 2>/dev/null )
+}
+
+t_open_work_of_a_mac_behind_goes_on_top() {
+  commit_on A c2.txt
+  echo "from B" > "$T/B/dev/App/notes.txt"; on B park           # B is still at the first commit
+  on A resume
+  check "resume failed" [ $RC = 0 ] || return 1
+  check "B's new file isn't here" grep -qx "from B" "$T/A/dev/App/notes.txt" || return 1
+  check "A lost its commit" [ -f "$T/A/dev/App/c2.txt" ] || return 1
+  case $OUT in *"1 commit behind"*) ;; *) fail "doesn't say B is behind"; return 1 ;; esac
+}
+
+t_open_work_of_a_mac_behind_that_is_here_already() {
+  commit_on A c2.txt
+  echo same > "$T/A/dev/App/notes.txt"; echo same > "$T/B/dev/App/notes.txt"; on B park
+  on A resume
+  check "resume failed" [ $RC = 0 ] || return 1
+  case $OUT in *"here already"*) ;; *) fail "doesn't say it's here already"; return 1 ;; esac
+}
+
+t_sync_from_the_mac_behind() {
+  on A status; on B status
+  commit_on A c2.txt
+  echo same > "$T/A/dev/App/notes.txt"; echo same > "$T/B/dev/App/notes.txt"
+  on A park
+  answer_requests A &
+  ROAM_SYNC_WAIT=30 on B sync App
+  wait
+  check "sync failed" [ $RC = 0 ] || return 1
+  check "B didn't catch up" [ "$(git -C "$T/B/dev/App" rev-parse HEAD)" = "$(git -C "$T/A/dev/App" rev-parse HEAD)" ] || return 1
+  case $OUT in *"is in sync"*) ;; *) fail "not in sync afterwards"; return 1 ;; esac
+}
+
+t_app_names_the_mac_behind() {
+  on B status
+  commit_on A c2.txt; on A status
+  OUT=$(HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+    ROAM_TUI_SNAPSHOT=dash ROAM_COLS=120 ROAM_ROWS=30 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+  printf '%s\n' "$OUT" | grep -q -E '❯ App .* ≠' || { fail "the list doesn't mark App with ≠"; return 1; }
+  case $OUT in *"is 1 commit behind"*) ;; *) fail "the preview doesn't name the Mac behind"; return 1 ;; esac
+}
+
 # ---------------------------------------------------------------- run
 printf '\n  roam tests %s(%s)%s\n\n' "$D" "$(/bin/bash -c 'echo $BASH_VERSION')" "$N"
 for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do run "$t"; done
