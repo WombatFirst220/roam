@@ -13,12 +13,13 @@
 #   roam sessions [project]    AI sessions (Claude, Codex, Gemini, Copilot, opencode) on every Mac
 #   roam session <project> [n] read a session      roam continue <project> [n]  pick it up again
 #   roam read [project] [file] the project's README, CLAUDE.md, docs … in the reader
+#   roam undo [project]        back to how it was before the last resume (undo works twice, too)
 #   roam leave        take this Mac out of the pool
 #   roam auto         background run (LaunchAgent): park, report, never touch your files
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.4.4
+ROAM_VERSION=1.5.0
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -145,7 +146,7 @@ lock() {
 usage() {
   header "v$ROAM_VERSION" ""
   printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
-  sed -n '4,17p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  sed -n '4,18p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
 
@@ -184,6 +185,7 @@ case $CMD in
   session) need_pool; session_cmd "${2:-}" "${3:-}" ;;
   continue) need_pool; continue_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
   read)    need_pool; read_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
+  undo)    need_pool; undo_cmd "${2:-}" || ERRORS=1 ;;
   version|--version|-v) echo "roam $ROAM_VERSION" ;;
   help|-h|--help) usage ;;
   *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;

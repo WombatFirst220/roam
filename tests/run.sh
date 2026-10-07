@@ -208,6 +208,62 @@ t_status_file_is_only_rewritten_when_something_changed() {
   check "a changed project did not update the status" [ "$(stat -f %i "$f")" != "$ino" ]
 }
 
+t_park_skips_push_hooks() {
+  printf '#!/bin/sh\nexit 1\n' > "$T/A/dev/App/.git/hooks/pre-push"; chmod +x "$T/A/dev/App/.git/hooks/pre-push"
+  echo wip >> "$T/A/dev/App/a.txt"
+  on A park
+  check "a pre-push hook blocked the park" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A
+}
+
+t_a_stale_index_lock_stops_park_and_resume() {
+  echo wip >> "$T/A/dev/App/a.txt"
+  touch -t 202001010000 "$T/A/dev/App/.git/index.lock"
+  on A park
+  case $OUT in *index.lock*) ;; *) fail "park didn't mention index.lock"; return 1 ;; esac
+  check "parked despite the lock" not git -C "$T/remote.git" rev-parse -q --verify refs/roam/A || return 1
+  on A resume
+  case $OUT in *index.lock*) ;; *) fail "resume didn't mention index.lock"; return 1 ;; esac
+}
+
+t_resume_keeps_a_backup_and_undo_restores_it() {
+  echo "from A" > "$T/A/dev/App/a.txt"; echo "new on A" > "$T/A/dev/App/new.txt"; on A park
+  on B resume
+  check "resume did not take A's work" grep -q "from A" "$T/B/dev/App/a.txt" || return 1
+  check "no backup ref" git -C "$T/B/dev/App" rev-parse -q --verify refs/roam-backup || return 1
+  on B undo App
+  check "undo failed" [ $RC = 0 ] || return 1
+  check "undo left A's change" grep -qx hello "$T/B/dev/App/a.txt" || return 1
+  check "undo left A's new file" [ ! -e "$T/B/dev/App/new.txt" ] || return 1
+  on B undo App
+  check "undoing the undo failed" grep -q "from A" "$T/B/dev/App/a.txt" || return 1
+  check "undoing the undo lost the new file" [ -f "$T/B/dev/App/new.txt" ]
+}
+
+t_a_continued_transcript_is_never_cut_short() {
+  mkdir -p "$(claude_dir A)"
+  printf '{"n":1}\n{"n":2}\n' > "$(claude_dir A)/s1.jsonl"
+  on A park; on B resume
+  printf '{"n":3}\n' >> "$(claude_dir B)/s1.jsonl"; on B park
+  touch -t 203001010000 "$(claude_dir A)/s1.jsonl"            # A's shorter copy looks newer
+  on A park
+  check "the pool lost line 3" grep -q '"n":3' "$T/pool/claude/App/s1.jsonl"
+}
+
+t_a_session_continued_on_two_macs_is_merged() {
+  mkdir -p "$(claude_dir A)"
+  printf '{"n":1}\n{"n":2}\n' > "$(claude_dir A)/s1.jsonl"
+  on A park; on B resume
+  printf '{"a":3}\n' >> "$(claude_dir A)/s1.jsonl"; on A park
+  printf '{"b":3}\n' >> "$(claude_dir B)/s1.jsonl"
+  touch -t 203001010000 "$(claude_dir B)/s1.jsonl"            # same size as A's: the time must tell them apart
+  on B park
+  check "pool lost A's line" grep -q '"a":3' "$T/pool/claude/App/s1.jsonl" || return 1
+  check "pool lost B's line" grep -q '"b":3' "$T/pool/claude/App/s1.jsonl" || return 1
+  check "lines doubled" [ "$(grep -c '"n":1' "$T/pool/claude/App/s1.jsonl")" = 1 ] || return 1
+  on A resume
+  check "A didn't get B's line" grep -q '"b":3' "$(claude_dir A)/s1.jsonl"
+}
+
 t_scripts_are_bash32_clean() {
   local hits
   hits=$(grep -n -E 'declare -A|mapfile|readarray|\$\{[a-zA-Z_]+(,,|\^\^)\}|local -n|coproc|\|&|&>>' "$ROOT/roam" "$ROOT"/lib/*.sh)

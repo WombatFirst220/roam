@@ -26,11 +26,22 @@ in_the_middle() {  # merge, rebase, cherry-pick or bisect in progress
   [ -d "$g/rebase-merge" ] || [ -d "$g/rebase-apply" ] || [ -f "$g/MERGE_HEAD" ] || [ -f "$g/CHERRY_PICK_HEAD" ] || [ -f "$g/BISECT_LOG" ]
 }
 
+git_busy() {  # $1 name, $2 what isn't done → status 0 and a report when .git/index.lock is in the way
+  local l
+  l=$(git rev-parse --git-path index.lock)
+  [ -f "$l" ] || return 1
+  if [ -n "$(find "$l" -mmin +2 2>/dev/null)" ]; then
+    report err "$1" "a crashed git left $(git rev-parse --git-dir)/index.lock — $2. If no git is running here: rm $l"
+  else report info "$1" "git is busy here — $2, next time then"; fi
+}
+
 # The pool keeps SSH addresses, but on a Mac whose SSH key belongs to another account they get no access —
 # the same repo over HTTPS often does (gh login, keychain). So every talk with origin tries SSH, then HTTPS.
 origin_git() {  # $1 push|fetch, $2 options ("-q --force"), rest: refspecs → status; git's reason in ORIGIN_ERR
   local cmd=$1 opts=$2 url https
   shift 2
+  # only roam's own refs are pushed: a pre-push hook (tests, lint) must not slow down or block a park
+  [ "$cmd" = push ] && opts="$opts --no-verify"
   ORIGIN_ERR=$(git $cmd $opts origin "$@" 2>&1) && return 0
   url=$(git remote get-url origin 2>/dev/null) https=$(https_remote "$url")
   [ -n "$url" ] && [ "$https" != "$url" ] || return 1
@@ -97,6 +108,7 @@ park_project() {  # $1 name; cwd is the project
   g=$(git rev-parse --git-dir)
   head=$(git rev-parse -q --verify HEAD) || { report info "$name" "no commits yet — skipped"; return; }
   if in_the_middle; then report err "$name" "merge/rebase in progress — not parked"; return; fi
+  git_busy "$name" "not parked" && return
 
   # Clean and fully pushed: nothing in flight. Remove an old snapshot, otherwise the other Macs
   # would keep seeing it as open work.
@@ -155,6 +167,43 @@ EOF
   fi
 }
 
+# ---------------------------------------------------------------- backup
+# Before resume changes a working directory, its state goes to refs/roam-backup — a commit like a snapshot
+# (tree = everything incl. untracked files, parent = HEAD), only in this repo, with a reflog:
+# `roam undo` brings it back, `git reflog refs/roam-backup` lists the older ones.
+backup_here() {  # $1 why → status
+  local head tree old sha
+  head=$(git rev-parse -q --verify HEAD) || return 0
+  tree=$(worktree_tree) || return 1
+  old=$(git rev-parse -q --verify refs/roam-backup)
+  [ -n "$old" ] && [ "$(git rev-parse "$old^{tree}")" = "$tree" ] && [ "$(git rev-parse "$old^")" = "$head" ] && return 0
+  sha=$(printf 'roam backup %s\n\n%s\n' "$(git symbolic-ref --short -q HEAD || echo -)" "$1" | git commit-tree "$tree" -p "$head") || return 1
+  git update-ref --create-reflog -m "roam: $1" refs/roam-backup "$sha"
+}
+
+undo_cmd() {  # [project] — back to how the working directory was before the last resume
+  local b branch g
+  pick_project "${1:-}" "Undo the last resume in which project?" || return 1
+  [ -d "$P_PATH/.git" ] || { say_err "$P_NAME isn't on this Mac"; return 1; }
+  cd "$P_PATH" || return 1
+  g=$(git rev-parse --git-dir)
+  b=$(git rev-parse -q --verify refs/roam-backup) || { say_info "$P_NAME: no backup — resume hasn't changed anything here"; return 0; }
+  in_the_middle && { say_err "$P_NAME: merge/rebase in progress — finish it first"; return 1; }
+  [ -f "$(git rev-parse --git-path index.lock)" ] && { say_err "$P_NAME: git is busy (index.lock)"; return 1; }
+  branch=$(git log -1 --format=%s "$b" | awk '{print $3}')
+  # the current state becomes the next backup: undo can be undone
+  backup_here "before undo" || { say_err "$P_NAME: couldn't back up the working directory — nothing changed"; return 1; }
+  if [ "$branch" != "-" ] && git show-ref -q --verify "refs/heads/$branch"; then
+    git checkout -q -f "$branch" && git reset -q --hard "$b^" || { say_err "$P_NAME: couldn't go back to $branch"; return 1; }
+  else
+    git checkout -q -f --detach "$b^" || { say_err "$P_NAME: checkout failed"; return 1; }
+  fi
+  git clean -q -fd && git read-tree -u --reset "$b" && git reset -q || { say_err "$P_NAME: couldn't restore the working directory"; return 1; }
+  # no longer what was taken over: a park from here must not count as building on the other Mac's work
+  rm -f "$g/roam-applied"
+  say_ok "$P_NAME: back to $(git log -1 --format=%cr "$b") · $branch · $(git log -1 --format=%b "$b" | head -1)"
+}
+
 # ---------------------------------------------------------------- resume
 foreign_snapshots() {  # other Macs' snapshots, newest first: "<sha> <time> <mac>"
   git for-each-ref --sort=-committerdate --format='%(objectname) %(committerdate:unix) %(refname:lstrip=3)' refs/remotes/roam/ |
@@ -178,6 +227,7 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
     # nothing.
     if [ "$head" != "$up" ] && git merge-base --is-ancestor "$head" "$up" &&
        committed_upstream "$(worktree_tree)" "$head" "$up"; then
+      backup_here "before moving to $(git rev-parse --abbrev-ref '@{u}')" || { report err "$name" "couldn't back up the working directory — nothing changed"; return; }
       git reset -q --hard "$up" && git clean -q -fd && rm -f "$g/roam-applied"
       drop_own_snapshot || report err "$name" "couldn't remove this Mac's old snapshot from the remote: $(origin_why)"
       report ok "$name" "your changes were committed on another Mac — now at $(git rev-parse --abbrev-ref '@{u}')"
@@ -188,6 +238,7 @@ fast_forward() {  # $1 name. Nothing new from other Macs: fast-forward a clean b
     if [ -n "$applied" ] && [ -n "$(current_matches "$applied")" ] &&
        [ -z "$(git for-each-ref --points-at "$applied" refs/remotes/roam/)" ]; then
       if git merge-base --is-ancestor "$head" "$up" && [ "$(git rev-parse "$up^{tree}")" = "$(git rev-parse "$applied^{tree}")" ]; then
+        backup_here "before moving to $(git rev-parse --abbrev-ref '@{u}')" || { report err "$name" "couldn't back up the working directory — nothing changed"; return; }
         git reset -q --hard "$up" && git clean -q -fd && rm -f "$g/roam-applied"
         report ok "$name" "that work got committed on the other Mac — now at $(git rev-parse --abbrev-ref '@{u}')"
         return
@@ -214,6 +265,7 @@ resume_project() {  # $1 name
   local name=$1 g foreign sha time from branch own known target applied head
   g=$(git rev-parse --git-dir)
   git rev-parse -q --verify HEAD >/dev/null || { report info "$name" "no commits yet"; return; }
+  git_busy "$name" "nothing taken over" && return
   foreign=$(foreign_snapshots | head -1)
   applied=$(cat "$g/roam-applied" 2>/dev/null)
   if [ -z "$foreign" ]; then fast_forward "$name"; return; fi
@@ -241,6 +293,8 @@ resume_project() {  # $1 name
     report err "$name" "$branch has commits here that $(mac_label "$from")'s snapshot lacks. Look: git log --oneline $branch...refs/remotes/roam/$from^"
     return
   fi
+  # Whatever happens next, the state before stays at hand: roam undo
+  backup_here "before resuming from $from" || { report err "$name" "couldn't back up the working directory — nothing taken over"; return; }
   # 2. Local changes may only be dropped if they're safely parked and the snapshot builds on them.
   #    Otherwise both Macs were edited in parallel.
   if ! is_clean; then
@@ -288,6 +342,25 @@ is_placeholder() {  # $1 file: has a size, yet starts with nothing but NUL bytes
   [ -s "$1" ] && [ -z "$(head -c 512 "$1" | LC_ALL=C tr -d '\000')" ]   # C: binary data or a cut-off umlaut isn't an error
 }
 
+is_prefix() {  # $1 file, $2 file: $2 starts with all of $1
+  [ "$(stat -f %z "$1")" -le "$(stat -f %z "$2")" ] && head -c "$(stat -f %z "$1")" "$2" | cmp -s - "$1"
+}
+
+# A transcript is append-only. Continued on one Mac: the longer copy holds everything, whatever the clocks
+# say. Continued on two Macs (claude --resume here and there): every line of both, nothing lost —
+# Claude Code follows the parentUuid links, the second line of thought becomes a branch like after a rewind.
+transcript_meet() {  # $1 src, $2 dst, $3 project, $4 relative path
+  local m
+  is_prefix "$1" "$2" && return 0
+  if is_prefix "$2" "$1"; then cp -p "$1" "$2"; return; fi
+  # Merge complete files only: one that is being written right now waits for the next run.
+  [ -z "$(tail -c 1 "$1" | tr -d '\n')" ] && [ -z "$(tail -c 1 "$2" | tr -d '\n')" ] || return 0
+  m="$2.roam-merge"
+  LC_ALL=C awk '!seen[$0]++' "$2" "$1" > "$m" || { rm -f "$m"; return 1; }
+  if cmp -s "$m" "$2"; then rm -f "$m"
+  else mv "$m" "$2" && log "$3: merged $4 — the session went on on two Macs"; fi
+}
+
 claude_sync() {  # $1 name, $2 project path, $3 up|down
   local local_dir="$HOME/.claude/projects/$(claude_key "$2")" store="$CLAUDE_STORE/$1" filter="" scope=. src dst bad f
   # Session transcripts (for claude --resume) contain everything a session saw, including printed
@@ -302,7 +375,12 @@ claude_sync() {  # $1 name, $2 project path, $3 up|down
     [ -n "$f" ] || continue
     f=${f#./}
     if is_placeholder "$src/$f"; then printf '/%s\n' "$f" >> "$bad"
-    elif [ -f "$dst/$f" ] && is_placeholder "$dst/$f"; then cp -p "$src/$f" "$dst/$f" && log "$1: repaired the empty file $f"; fi
+    elif [ -f "$dst/$f" ] && is_placeholder "$dst/$f"; then cp -p "$src/$f" "$dst/$f" && log "$1: repaired the empty file $f"
+    elif case $f in *.jsonl) [ -f "$dst/$f" ] ;; *) false ;; esac &&
+         [ "$(stat -f '%z %m' "$src/$f")" != "$(stat -f '%z %m' "$dst/$f")" ]; then
+      # the same transcript on both sides, but different: never "the newer file wins"
+      transcript_meet "$src/$f" "$dst/$f" "$1" "$f"; printf '/%s\n' "$f" >> "$bad"
+    fi
   done <<EOF
 $(cd "$src" && [ -d "$scope" ] && find "$scope" -type f)
 EOF

@@ -84,7 +84,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.4.4                                                                               14:02
+ ◆ roam  v1.5.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 3 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature/lo… ●4 ☁ ✻ 2m ● ││ Mac mini          feature/login ●4 ☁                 │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -191,6 +191,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam read [project] [file]` | the project's Markdown files in the reader |
 | `roam status` | the dashboard without the menu |
 | `roam setup` | set up or repair this Mac |
+| `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
 | `roam leave` | take this Mac out of the pool |
 
 ## How it works
@@ -222,6 +223,10 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
 - **Ancestry, not clocks.** `roam resume` only replaces local changes when they're safely parked
   *and* the other Mac's snapshot builds on them. Worked on two Macs in parallel? roam takes
   nothing over and shows you how to compare. No surprises, no lost work.
+- **A way back.** Before resume changes a working directory, it keeps the state as
+  `refs/roam-backup` (only in that repo, with a reflog). `roam undo` brings it back.
+- **Hands off.** roam leaves a project alone while a merge or rebase is running or git holds
+  `.git/index.lock`, and it pushes its own refs without your git hooks (`--no-verify`).
 - **Auto-park never touches your files.** The background job only parks and reports — it never
   resumes behind an open Xcode.
 - **Secrets stay home.** Untracked `*.pem`, `*.p12`, `*.p8`, `*.key`, `.env*`, `id_rsa` … block a
@@ -230,6 +235,8 @@ bytes. roam gives up on a pool that doesn't answer within 30 s and says so, and 
   `claude --resume`) lives in `~/.claude/projects/<path>/`. roam mirrors it through the pool —
   which is why a project has to live at the same path on every Mac. A transcript or memory file your
   sync app left as NUL bytes never overwrites a good copy, and `roam resume` restores it from the pool.
+  Transcripts never go by "the newer file wins": the longer copy of a session wins, and a session
+  you went on with on two Macs ends up with the lines of both.
 
 ## What `roam doctor` checks
 
