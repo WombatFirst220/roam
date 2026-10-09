@@ -785,7 +785,7 @@ t_markdown_files_ranked_readme_first() {
 # ---------------------------------------------------------------- the app
 t_app_frame_fits_the_terminal() {
   local w line bad=""
-  for w in 80 120; do
+  for w in 64 80 120; do
     OUT=$(HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
       ROAM_TUI_SNAPSHOT=dash ROAM_COLS=$w ROAM_ROWS=24 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1)
     case $OUT in *App*) ;; *) fail "project missing at $w columns"; return 1 ;; esac
@@ -805,13 +805,46 @@ in_a_terminal() {  # roam as A, in a pseudo-terminal → $T/pty
 }
 pty_has() { LC_ALL=C sed $'s/\033\\[[0-9;]*m//g' "$T/pty" | grep -a -q "$1"; }   # $1 in the terminal's output (art comes colored letter by letter)
 
+t_app_clips_long_lines_in_a_narrow_terminal() {
+  local v line bad="" d="$T/A/dev/App/a-folder-with-a-rather-long-name/and-another-one-below-it"
+  mkdir -p "$d"; touch "$d/x"; echo 'a-folder-with-a-rather-long-name/' > "$T/A/dev/App/.gitignore"
+  printf 'mac=B\nname=MacBook Pro with a very long name indeed\nseen=%s\nversion=1.9.0\nmacos=27.0.1\nxcode=27.0.1 (build 27A1234567)\n' "$(date +%s)" > "$P/macs/B.txt"
+  for v in dash repo; do
+    OUT=$(HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+      ROAM_TUI_SNAPSHOT=$v ROAM_COLS=64 ROAM_ROWS=24 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+    while IFS= read -r line; do
+      [ "$(printf '%s' "$line" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -le 64 ] || bad="$v: $line"
+    done <<EOF
+$OUT
+EOF
+  done
+  check "a line is wider than the terminal: $bad" [ -z "$bad" ] || return 1
+  case $OUT in *"− a-folder-with-a-rather-long-name/"*"…"*) ;; *) fail "the long row isn't cut with …"; return 1 ;; esac
+}
+
+t_app_shows_about_this_mac() {
+  local w line bad=""
+  for w in 64 100; do
+    OUT=$(HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+      ROAM_TUI_SNAPSHOT=about ROAM_COLS=$w ROAM_ROWS=24 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+    case $OUT in *"About This Mac"*"roam $(sed -n 's/^ROAM_VERSION=//p' "$ROOT/roam")"*"│   ▌  ▐   │"*"Projects   1 "*) ;;
+      *) fail "no About This Mac at $w columns"; return 1 ;; esac
+    while IFS= read -r line; do
+      [ "$(printf '%s' "$line" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -le $w ] || bad="$w: $line"
+    done <<EOF
+$OUT
+EOF
+  done
+  check "a line is wider than the terminal: $bad" [ -z "$bad" ]
+}
+
 t_app_starts_and_quits_cleanly() {
   local p
-  ( sleep 2; printf 'j'; sleep 0.5; printf '?'; sleep 0.5; printf 'x'; sleep 0.5; printf 'Q'; sleep 2 ) |
+  ( sleep 2; printf 'j'; sleep 0.5; printf '?'; sleep 0.5; printf 'x'; for _ in $(seq 15); do sleep 1; printf 'Q'; done ) |   # Q until it's read
     HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
     script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
   p=$!
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do sleep 1; kill -0 $p 2>/dev/null || break; done
+  for _ in $(seq 18); do sleep 1; kill -0 $p 2>/dev/null || break; done
   if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit on Q"; return 1; fi
   OUT=$(LC_ALL=C grep -a -c $'\033\\[?1049l' "$T/pty")
   check "terminal not restored (alternate screen still on)" [ "$OUT" -ge 1 ] || return 1
@@ -823,7 +856,7 @@ t_app_starts_and_quits_cleanly() {
 t_app_parks_live_and_comes_back() {
   local p
   echo "changed in the app" > "$T/A/dev/App/a.txt"
-  ( sleep 2; printf 'p'; sleep 6; printf '\r'; sleep 1; printf 'Q'; sleep 2 ) |
+  ( sleep 2; printf 'p'; sleep 6; printf '\r'; for _ in $(seq 12); do sleep 1; printf 'Q'; done ) |   # Q until it's read
     HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_LOCK="$T/A.lock" \
     ROAM_NO_ANIM=1 script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
   p=$!
@@ -864,20 +897,20 @@ t_old_macs_for_fans() {
 
 t_app_says_its_safe_when_nothing_is_open() {
   local p
-  ( sleep 3; printf 'Q'; sleep 3 ) |
+  ( for _ in $(seq 15); do sleep 1; printf 'Q'; done ) |   # Q until it's read: the app may take a while to start
     HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
     script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
   p=$!
   for _ in $(seq 15); do sleep 1; kill -0 $p 2>/dev/null || break; done
-  kill $p 2>/dev/null
+  if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit on Q"; return 1; fi
   check "no Macintosh goodbye on a clean Mac" pty_has "It's now safe to turn off your Macintosh." || return 1
   echo open > "$T/A/dev/App/a.txt"
-  ( sleep 3; printf 'Q'; sleep 3 ) |
+  ( for _ in $(seq 15); do sleep 1; printf 'Q'; done ) |   # Q until it's read: the app may take a while to start
     HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
     script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
   p=$!
   for _ in $(seq 15); do sleep 1; kill -0 $p 2>/dev/null || break; done
-  kill $p 2>/dev/null
+  if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit on Q"; return 1; fi
   check "says it's safe with open work" not pty_has "safe to turn off" || return 1
   check "no reminder to park" pty_has 'park before you walk away'
 }

@@ -83,6 +83,23 @@ tvis() {  # $1 → VIS: visible width — counted in bytes (fast) minus UTF-8 co
 }
 tpad() { tvis "$1"; printf -v PAD '%s%*s' "$1" $(( $2 > VIS ? $2 - VIS : 0 )) ''; }                      # pad to $2
 tfit() { if [ ${#1} -gt "$2" ]; then FIT="${1:0:$(($2 - 1))}…"; else FIT=$1; fi; }                        # plain text, cut to $2
+tclip() {  # $1 colored text, $2 width → CLIP: cut to $2 visible characters with … at the end; colors and links kept
+  local s=$1 n=$2 i=0 c out="" v=0 len=${#1}
+  while [ $i -lt $len ]; do
+    c=${s:i:1}
+    if [ "$c" = $'\033' ]; then   # an escape sequence: copied whole, it takes no room
+      case ${s:i+1:1} in
+        '[') local e=${s:i}; e=${e%%m*}; out="$out${e}m"; i=$((i + ${#e} + 1)) ;;
+        ']') local e=${s:i}; e=${e%%$'\033\\'*}; out="$out$e"$'\033\\'; i=$((i + ${#e} + 2)) ;;
+        *) out="$out$c"; i=$((i + 1)) ;;
+      esac
+      continue
+    fi
+    [ $v -ge $((n - 1)) ] && { out="${out}…"; break; }
+    out="$out$c"; v=$((v + 1)); i=$((i + 1))
+  done
+  CLIP="$out$K_R"
+}
 thl() { printf -v HL '%*s' "$1" ''; HL=${HL// /${2:-─}}; }                                                  # $2 repeated $1 times
 tright() { tvis "$1"; local a=$VIS; tvis "$2"; printf -v PAD '%s%*s%s' "$1" $(( $3 - a - VIS > 1 ? $3 - a - VIS : 1 )) '' "$2"; }  # $1 left, $2 right, width $3
 
@@ -174,7 +191,7 @@ panel() {
   else r="╮"; thl $(( w - 4 - tl - 1 )); fi
   PB=("${col}╭─${K_R} $t ${col}$HL${r}${K_R}")
   for ((i = 0; i < h - 2; i++)); do
-    tpad "${PC[$i]-}" $inner
+    tvis "${PC[$i]-}"; if [ "$VIS" -gt $inner ]; then tclip "${PC[$i]}" $inner; PAD=$CLIP; else tpad "${PC[$i]-}" $inner; fi
     PB[$((i + 1))]="${col}│${K_R} $PAD ${col}│${K_R}"
   done
   thl $((w - 2))
@@ -553,7 +570,7 @@ EOF
   if [ $nh -gt 0 ]; then
     PC=()
     for ((i = 0; i < ${#NOW_L[@]} && i < nh - 2; i++)); do PC[$i]=${NOW_L[$i]}; done
-    [ ${#NOW_L[@]} -eq 0 ] && PC[0]="${K_MUTED}quiet — no open changes on an online Mac, no AI session in the last 2 hours${K_R}"
+    [ ${#NOW_L[@]} -eq 0 ] && { tfit "quiet — no open changes on an online Mac, no AI session in the last 2 hours" $((COLS - 6)); PC[0]="${K_MUTED}$FIT${K_R}"; }
     if [ ${#NOW_L[@]} -gt $((nh - 2)) ]; then panel $COLS $nh "Now" 0 "$((nh - 2)) of ${#NOW_L[@]} · s: sessions"
     else panel $COLS $nh "Now" 0 "${#NOW_L[@]} in progress"; fi
     for ((i = 0; i < nh; i++)); do S[$((top + ph + i))]=${PB[$i]}; done
@@ -566,7 +583,7 @@ EOF
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
   if [ -n "$PROMPT" ]; then prompt_bar "filter"
-  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs i:repo d:doctor ?:keys_&_symbols q:quit" "$right"; fi
+  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs i:repo d:doctor A:about ?:keys_&_symbols q:quit" "$right"; fi
 }
 
 dash_visible() {  # VIDX[] = projects whose name matches FILTER (letters in order, any case); keeps SEL on one of them
@@ -627,6 +644,7 @@ dash_key() {
     n) tui_outside "New project" 'new_project'; tui_refresh ;;
     a) tui_outside "" 'add_cmd ""'; tui_refresh ;;
     L) log_open ;;
+    A) about_info; ABOUT_ON=1 ;;
     u) tui_refresh fetch ;;
     c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
     e) [ ${#VIDX[@]} -gt 0 ] && secrets_toggle ;;
@@ -1022,6 +1040,7 @@ Dashboard
   n        new project               a / L    add a project / log
   y        sync this project         e        encrypted secrets on/off
   i        what goes into the repo   ⏎ space  (Git tab) goes in ⇄ stays out
+  A        About This Mac
 Symbols
   ✓        clean, all pushed         ●n       files changed
   +n       new, never committed      ↑n       commits not pushed
@@ -1052,6 +1071,34 @@ help_draw() {
   done
 }
 
+about_draw() {  # About This Mac over the dashboard: the Happy Mac in rainbow stripes, the version, this Mac, the pool
+  local w=0 h i l y x k=0 n=${#ABOUT[@]} arts=() bow=(77 220 214 203 135 75) iw
+  while IFS= read -r l; do arts[k]=$l; k=$((k + 1)); done <<EOF
+$ART_HAPPY
+EOF
+  for ((i = 0; i < n; i++)); do l=${ABOUT[$i]}; l=${l/$'\t'/           }; [ ${#l} -gt $w ] && w=${#l}; done
+  w=$(( 16 + 4 + w + 6 )); [ $w -gt $((COLS - 4)) ] && w=$((COLS - 4)); iw=$(( w - 4 - 16 - 4 ))
+  h=$(( (k > n ? k : n) + 2 )); [ $h -gt $((ROWS - 2)) ] && return 0
+  y=$(( (ROWS - h) / 2 )); x=$(( (COLS - w) / 2 ))
+  for ((i = 1; i < ROWS - 1; i++)); do tstrip "${S[$i]-}"; S[$i]="$K_DIM$STRIP"; done
+  PC=()
+  for ((i = 0; i < h - 2; i++)); do
+    l=${arts[$i]-}; tpad "$l" 16
+    [ -n "$l" ] && PAD=$'\033[38;5;'"${bow[$(( i * 6 / k ))]}m$PAD$K_R"
+    PC[i]="$PAD    "
+    l=${ABOUT[$i]-}
+    case $l in
+      *$'\t'*) tfit "${l#*$'\t'}" $((iw - 11)); tpad "${l%%$'\t'*}" 11; PC[i]="${PC[$i]}${K_MUTED}$PAD${K_R}$FIT" ;;
+      *) tfit "$l" $iw; if [ $i = 0 ]; then PC[i]="${PC[$i]}${K_B}$FIT${K_R}"; else PC[i]="${PC[$i]}${K_MUTED}$FIT${K_R}"; fi ;;
+    esac
+  done
+  panel $w $h "About This Mac" 1 "any key closes"
+  for ((i = 0; i < h; i++)); do
+    tstrip "${S[$((y + i))]-}"; tpad "$STRIP" "$COLS"; l=$PAD
+    S[$((y + i))]="$K_DIM${l:0:$x}$K_R${PB[$i]}$K_DIM${l:$((x + w))}"
+  done
+}
+
 # ---------------------------------------------------------------- running things outside the app
 tui_outside() {  # $1 title (empty: none), $2 shell code, $3 "nopause"
   tui_leave
@@ -1069,12 +1116,13 @@ tui_frame() {
   case $VIEW in dash) dash_draw ;; proj) proj_draw ;; reader) reader_draw ;; run) run_draw ;; esac
   toast_draw
   [ "$HELP_ON" = 1 ] && help_draw
+  [ "${ABOUT_ON:-0}" = 1 ] && about_draw
   local i
   for ((i = 0; i < ROWS; i++)); do fb_line $i "${S[$i]-}"; done
   fb_flush
 }
 
-tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help: one frame on stdout, no terminal needed (tests, docs)
+tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help|about: one frame on stdout, no terminal needed (tests, docs)
   FILTER="${ROAM_TUI_FILTER:-}" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0
   TUI_DIR=$(mktemp -d -t roam-tui); SEL=0 BUSY="" TICKS=0 HELP_ON=0 TOAST_T=0 PROMPT="" PV_KEY="" FULL=1 PREV=() FB=""
   tui_palette; tui_size
@@ -1083,11 +1131,12 @@ tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help: one frame on stdout, 
   tui_bg_sessions; now_build
   VIEW=dash NOW=$(date +%s)
   dash_visible   # ROAM_TUI_FILTER picks the project
-  case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; repo) proj_open 2 ;; help) HELP_ON=1 ;;
+  case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; repo) proj_open 2 ;; help) HELP_ON=1 ;; about) about_info; ABOUT_ON=1 ;;
     esac
   S=()
   case $VIEW in dash) dash_draw ;; proj) proj_draw ;; esac
   [ "$HELP_ON" = 1 ] && help_draw
+  [ "${ABOUT_ON:-0}" = 1 ] && about_draw
   local i; for ((i = 0; i < ROWS; i++)); do printf '%s%s\n' "${S[$i]-}" "$K_R"; done
   rm -rf "$TUI_DIR"
 }
@@ -1140,7 +1189,7 @@ tui_main() {
   export LC_ALL=${LC_ALL:-${LC_CTYPE:-en_US.UTF-8}}   # ${#s} counts characters only in a UTF-8 locale
   TUI_DIR=$(mktemp -d -t roam-tui)
   FILTER="" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0 MOUSE_B=0 MOUSE_X=0 MOUSE_Y=0 MOUSE_UP=0
-  SEL=0 VIEW=dash BUSY="" TICKS=0 HELP_ON=0 QUIT=0 TOAST="" TOAST_T=0 PROMPT="" PROMPT_TEXT="" PV_KEY="" FB="" RESIZED=0 DIRTY=1
+  SEL=0 VIEW=dash BUSY="" TICKS=0 HELP_ON=0 ABOUT_ON=0 QUIT=0 TOAST="" TOAST_T=0 PROMPT="" PROMPT_TEXT="" PV_KEY="" FB="" RESIZED=0 DIRTY=1
   tui_palette; tui_size
   trap 'tui_leave; [ -n "${TUI_JOBS:-}" ] && kill $TUI_JOBS 2>/dev/null; rm -rf "$TUI_DIR"' EXIT
   trap 'exit 130' INT TERM HUP
@@ -1165,6 +1214,7 @@ tui_main() {
     fi
     DIRTY=1
     if [ "$HELP_ON" = 1 ]; then HELP_ON=0; FULL=1; continue; fi
+    if [ "$ABOUT_ON" = 1 ]; then ABOUT_ON=0; FULL=1; continue; fi
     case $KEY in
       '?') HELP_ON=1; continue ;;
     esac

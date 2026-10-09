@@ -85,7 +85,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.9.0                                                                               14:02
+ ◆ roam  v1.9.1                                                                               14:02
 ╭─ Projects ─────────────────────────── 4 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature… ●3 +1 ☁ ✻ 2m ● ││ Mac mini          feature/login ●3 +1 ☁              │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -161,7 +161,7 @@ minutes.
   iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
   **y** syncs the selected project on every Mac (see above).
   **e** lets the selected project's secrets travel encrypted, or stops it (see below).
-  **L** log, **u** refresh, **?** shows every key.
+  **L** log, **u** refresh, **A** About This Mac (also `roam about`), **?** shows every key.
 - **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
 - The mouse works too: the wheel scrolls, a click selects, a click on the selected project opens it, a click
   on a tab switches to it. To select text, hold ⌥ or ⇧ while dragging (which one depends on the terminal),

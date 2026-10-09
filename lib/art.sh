@@ -150,8 +150,8 @@ greeting() {  # good morning / afternoon / evening, by this Mac's clock
   else echo "good evening"; fi
 }
 
-about_cmd() {  # About This Mac, roam style: the Happy Mac, the version, this Mac, the pool at a glance
-  local info=() f w n=0 on=0 np=0 ns=0 npk=0 name dir remote extra i l bow=(77 220 214 203 135 75) arts=() k=0 now
+about_info() {  # → ABOUT[]: what About This Mac shows; "label<TAB>value", or plain lines (the first is the name)
+  local f n=0 on=0 np=0 ns=0 npk=0 name dir remote extra now
   now=$(date +%s)
   while IFS= read -r f; do [ -n "$f" ] || continue
     n=$((n + 1)); [ $(( now - $(t=$(val seen "$f"); echo "${t:-0}") )) -lt "$ONLINE_SECS" ] && on=$((on + 1))
@@ -166,15 +166,24 @@ EOT
   done <<EOT
 $(projects)
 EOT
-  info=("${C_BOLD}roam${C_RESET} $ROAM_VERSION"
-        "${C_MUTED}same work · every Mac${C_RESET}"
-        ""
-        "${C_MUTED}This Mac   ${C_RESET}$(short_name "$(scutil --get ComputerName)") · macOS $(sw_vers -productVersion)"
-        "${C_MUTED}Pool       ${C_RESET}$(trunc "$(short_path "$POOL")" $(( $(ui_width) - 35 )))"
-        "${C_MUTED}Macs       ${C_RESET}$n in the pool · $on online"
-        "${C_MUTED}Projects   ${C_RESET}$np · $ns ≡ in sync · $npk parked here"
-        ""
-        "${C_MUTED}bash, git and a folder your Macs share${C_RESET}")
+  ABOUT=("roam $ROAM_VERSION" "same work · every Mac" ""
+         "This Mac$TAB$(short_name "$(scutil --get ComputerName)") · macOS $(sw_vers -productVersion)"
+         "Pool$TAB$(short_path "$POOL")"
+         "Macs$TAB$n in the pool · $on online"
+         "Projects$TAB$np · $ns ≡ in sync · $npk parked here"
+         "" "bash, git and a folder your Macs share")
+}
+
+about_cmd() {  # About This Mac, roam style: the Happy Mac, the version, this Mac, the pool at a glance
+  local info=() l i k=0 w arts=() bow=(77 220 214 203 135 75)
+  about_info
+  for ((i = 0; i < ${#ABOUT[@]}; i++)); do
+    l=${ABOUT[$i]}
+    case $l in
+      *"$TAB"*) info[i]="$C_MUTED$(pad "${l%%"$TAB"*}" 11)$C_RESET$(trunc "${l#*"$TAB"}" $(( $(ui_width) - 35 )))" ;;
+      *) if [ $i = 0 ]; then info[i]="$C_BOLD$l$C_RESET"; else info[i]="$C_MUTED$l$C_RESET"; fi ;;
+    esac
+  done
   echo
   if art_on && [ "$ART_UTF8" = 1 ]; then
     while IFS= read -r l; do arts[k]=$l; k=$((k + 1)); done <<EOT
