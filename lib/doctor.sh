@@ -293,8 +293,10 @@ doctor_show() {
   echo
   rule
   if [ "$missing" -eq 0 ] && [ "$hints" -eq 0 ]; then
+    art "$ART_HAPPY" 4
     printf '  %s %sAll set — this Mac has everything your projects need.%s\n' "$I_OK" "$C_BOLD" "$C_RESET"
   else
+    [ "$missing" -gt 0 ] && art "$ART_SAD" 4
     printf '  %s%s missing%s · %s%s hints%s' "$C_ERR" "$missing" "$C_RESET" "$C_WARN" "$hints" "$C_RESET"
     [ "$fixable" -gt 0 ] && printf ' · %s fixable → %sroam fix%s' "$fixable" "$C_ACCENT" "$C_RESET"
     echo

@@ -393,7 +393,8 @@ EOF
   echo
   verdict=$(sync_state "$P_NAME")
   case $verdict in
-    sync) printf '  %s %s%s is in sync%s — the same on every Mac\n' "${C_OK}≡${C_RESET}" "$C_BOLD" "$P_NAME" "$C_RESET" ;;
+    sync) art "$ART_SYNC" 4
+          printf '  %s %s%s is in sync%s — the same on every Mac\n' "${C_OK}≡${C_RESET}" "$C_BOLD" "$P_NAME" "$C_RESET" ;;
     differs) printf '  %s %s%s isn'"'"'t in sync yet%s — see above\n' "${C_WARN}≠${C_RESET}" "$C_BOLD" "$P_NAME" "$C_RESET" ;;
     *) printf '  %s synced here; whether every Mac is the same shows once they all run roam 1.8\n' "$I_OK" ;;
   esac
@@ -402,11 +403,13 @@ EOF
 
 finish_park() {
   echo
+  if [ "$ERRORS" -eq 0 ]; then art "$ART_PARK" 4; else art "$ART_SAD" 4; fi
   if [ "$ERRORS" -eq 0 ]; then printf '  %s %sAll parked.%s On your next Mac: %sroam resume%s\n' "$I_OK" "$C_BOLD" "$C_RESET" "$C_ACCENT" "$C_RESET"
   else printf '  %s %s problem(s) — see above\n' "$I_ERR" "$ERRORS"; fi
 }
 finish_resume() {
   echo
+  if [ "$ERRORS" -eq 0 ]; then art "$ART_RESUME" 4; else art "$ART_SAD" 4; fi
   if [ "$ERRORS" -eq 0 ]; then printf '  %s %sReady.%s Open Xcode and Claude Code now.\n' "$I_OK" "$C_BOLD" "$C_RESET"
   else printf '  %s %s problem(s) — see above\n' "$I_ERR" "$ERRORS"; fi
 }

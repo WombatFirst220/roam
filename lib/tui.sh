@@ -39,14 +39,10 @@ tui_palette() {  # truecolor where the terminal has it, else 256 colors; ROAM_CO
   I_OK="${C_OK}✓${C_RESET}" I_ERR="${C_ERR}✗${C_RESET}" I_WARN="${C_WARN}•${C_RESET}" I_ARROW="${C_ACCENT}❯${C_RESET}"
 }
 
-tui_grad() {  # $1 plain text → REPLY: pink → violet → cyan across the text
-  local s=$1 n=${#1} i r g b t out=""
-  if [ "$TC" != 1 ]; then
-    local ramp=(213 177 141 105 81)
-    for ((i = 0; i < n; i++)); do out="$out"$'\033[38;5;'"${ramp[$(( i * 4 / (n > 1 ? n - 1 : 1) ))]}m${s:i:1}"; done
-    REPLY="$out$K_R"; return
-  fi
-  for ((i = 0; i < n; i++)); do
+tui_grad_cut() {  # $1 plain text, $2 n → REPLY: the first n characters, in the same colors as tui_grad gives the whole text
+  local s=$1 n=${#1} i r g b t out="" ramp=(213 177 141 105 81)
+  for ((i = 0; i < $2 && i < n; i++)); do
+    if [ "$TC" != 1 ]; then out="$out"$'\033[38;5;'"${ramp[$(( i * 4 / (n > 1 ? n - 1 : 1) ))]}m${s:i:1}"; continue; fi
     t=$(( i * 200 / (n > 1 ? n - 1 : 1) ))   # 0…200: first half pink→violet, second violet→cyan
     if [ $t -le 100 ]; then r=$(( 244 + (167 - 244) * t / 100 )); g=$(( 114 + (139 - 114) * t / 100 )); b=$(( 182 + (250 - 182) * t / 100 ))
     else t=$((t - 100)); r=$(( 167 + (103 - 167) * t / 100 )); g=$(( 139 + (232 - 139) * t / 100 )); b=$(( 250 + (249 - 250) * t / 100 )); fi
@@ -54,6 +50,20 @@ tui_grad() {  # $1 plain text → REPLY: pink → violet → cyan across the tex
   done
   REPLY="$out$K_R"
 }
+tui_art() {  # $1 art, $2 rows free → appended to PC[] from n on (a blank line first), when it fits
+  [ -z "${ROAM_NO_ART:-}" ] || return 0
+  local l w=0 lines=() k=0
+  while IFS= read -r l; do lines[k]=$l; k=$((k + 1)); [ ${#l} -gt $w ] && w=${#l}; done <<EOF
+$1
+EOF
+  [ $((k + 1)) -le "$2" ] && [ $((w + 8)) -le "$COLS" ] || return 0
+  PC[n]=""; n=$((n + 1))
+  local bow=(77 220 214 203 135 75) i=0   # the old Macs: the six stripes of the old rainbow logo, row by row
+  for l in "${lines[@]}"; do
+    PC[n]="  "$'\033[38;5;'"${bow[$(( i * 6 / k ))]}m$l$K_R"; n=$((n + 1)); i=$((i + 1))
+  done
+}
+tui_grad() { tui_grad_cut "$1" ${#1}; }   # $1 plain text → REPLY: pink → violet → cyan across the text
 
 # ---------------------------------------------------------------- text without subshells
 tstrip() {  # $1 → STRIP: the text without SGR colors and OSC 8 links. Split on ESC once: pattern loops or extglob
@@ -963,6 +973,7 @@ run_draw() {
     if [ $errs -eq 0 ] && [ "$RUN_MODE" = park ]; then PC[n]="$I_OK ${K_B}All parked.${K_R} On your next Mac: ${K_ACC}roam resume${K_R}"
     elif [ $errs -eq 0 ]; then PC[n]="$I_OK ${K_B}Ready.${K_R} Open Xcode and Claude Code now."
     else PC[n]="$I_ERR $errs problem$([ $errs = 1 ] || echo s) — see above"; fi
+    if [ $errs -eq 0 ]; then n=$((n + 1)); tui_art "$([ "$RUN_MODE" = park ] && echo "$ART_PARK" || echo "$ART_RESUME")" $((ROWS - 6 - n)); fi
   elif [ ! -f "$TUI_DIR/run.locked" ] && ! kill -0 "$RUN_PID" 2>/dev/null; then
     PC[n]="${K_WARN}•${K_R} roam is busy (a background run?) — try again in a moment"
   fi
@@ -1083,6 +1094,7 @@ tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help: one frame on stdout, 
 
 tui_intro() {  # the logo, centered, with its gradient sweeping in — 6 frames, about a quarter second
   [ -z "${ROAM_NO_ANIM:-}" ] || return 0
+  if [ -z "${ROAM_NO_ART:-}" ] && [ "$ROWS" -ge 14 ] && [ "$COLS" -ge 44 ]; then tui_intro_big; return; fi
   local i t="◆  r o a m" y=$((ROWS / 2 - 1)) x
   x=$(( (COLS - ${#t}) / 2 ))
   for i in 1 2 3 4 5 6; do
@@ -1093,6 +1105,35 @@ tui_intro() {  # the logo, centered, with its gradient sweeping in — 6 frames,
   printf '\033[%d;%dH%s%s' $((y + 3)) $(( (COLS - 23) / 2 + 1 )) "$K_MUTED" "same work · every Mac$K_R" >/dev/tty
   sleep 0.15
 }
+
+tui_intro_big() {  # the Happy Mac, as every old Mac started; then the logo, column by column, a greeting under it
+  local lines=() l n=0 i k y x w=36 t bow=(77 220 214 203 135 75)
+  while IFS= read -r l; do lines[n]=$l; n=$((n + 1)); done <<EOF
+$ART_HAPPY
+EOF
+  y=$(( (ROWS - n) / 2 )); x=$(( (COLS - ${#lines[0]}) / 2 ))
+  for ((i = 0; i < n; i++)); do
+    printf '\033[%d;%dH\033[38;5;%dm%s%s' $((y + i + 1)) $((x + 1)) "${bow[$(( i * 6 / n ))]}" "${lines[$i]}" "$K_R" >/dev/tty
+  done
+  sleep 0.45
+  printf '\033[2J' >/dev/tty
+  lines=() n=0
+  while IFS= read -r l; do lines[n]=$l; n=$((n + 1)); done <<EOF
+$ART_LOGO
+EOF
+  y=$(( (ROWS - n - 3) / 2 )); x=$(( (COLS - w) / 2 ))
+  for k in 1 2 3 4 5 6 7 8; do
+    for ((i = 0; i < n; i++)); do
+      l=${lines[$i]}; tui_grad_cut "$l" $(( ${#l} * k / 8 ))
+      printf '\033[%d;%dH%s' $((y + i + 1)) $((x + 1)) "$REPLY" >/dev/tty
+    done
+    sleep 0.03
+  done
+  t="$(greeting) · same work, every Mac"
+  printf '\033[%d;%dH%s%s%s' $((y + n + 2)) $(( (COLS - ${#t}) / 2 + 1 )) "$K_MUTED" "$t" "$K_R" >/dev/tty
+  sleep 0.35
+}
+
 
 tui_main() {
   local i
@@ -1130,4 +1171,18 @@ tui_main() {
     case $VIEW in dash) dash_key "$KEY" ;; proj) proj_key "$KEY" ;; reader) reader_key "$KEY" ;; run) run_key "$KEY" ;; esac
     [ "$VIEW" != "${LAST_VIEW:-}" ] && { FULL=1; LAST_VIEW=$VIEW; }
   done
+  tui_leave
+  # nothing open on this Mac (all committed and pushed, or parked): the line every old Mac ended with
+  local name dir remote extra d msg="It's now safe to turn off your Macintosh."
+  while read -r name dir remote extra; do
+    d="$PROJECTS_DIR/$dir"
+    [ -d "$d/.git" ] || continue
+    git -C "$d" rev-parse -q --verify "refs/remotes/roam/$MAC" >/dev/null && continue   # parked
+    if [ -n "$(cd "$d" && git_status 2>/dev/null | head -1)" ] || [ "$(git -C "$d" rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)" != 0 ]; then
+      msg="see you on the next Mac — park before you walk away"; break
+    fi
+  done <<EOF
+$(projects)
+EOF
+  tui_grad "◆ roam"; printf '\n  %s  %s%s%s\n\n' "$REPLY" "$K_MUTED" "$msg" "$K_R"
 }

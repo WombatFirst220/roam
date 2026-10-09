@@ -799,6 +799,12 @@ EOF
   check "a line is wider than the terminal: $bad" [ -z "$bad" ]
 }
 
+in_a_terminal() {  # roam as A, in a pseudo-terminal → $T/pty
+  HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_LOCK="$T/A.lock" \
+    TERM=xterm-256color script -q "$T/pty" "$ROOT/roam" "$@" >/dev/null 2>&1 </dev/null
+}
+pty_has() { LC_ALL=C sed $'s/\033\\[[0-9;]*m//g' "$T/pty" | grep -a -q "$1"; }   # $1 in the terminal's output (art comes colored letter by letter)
+
 t_app_starts_and_quits_cleanly() {
   local p
   ( sleep 2; printf 'j'; sleep 0.5; printf '?'; sleep 0.5; printf 'x'; sleep 0.5; printf 'Q'; sleep 2 ) |
@@ -810,7 +816,8 @@ t_app_starts_and_quits_cleanly() {
   OUT=$(LC_ALL=C grep -a -c $'\033\\[?1049l' "$T/pty")
   check "terminal not restored (alternate screen still on)" [ "$OUT" -ge 1 ] || return 1
   OUT=$(LC_ALL=C grep -a -o 'unbound variable\|syntax error\|command not found' "$T/pty" | head -3)
-  check "errors on screen: $OUT" [ -z "$OUT" ]
+  check "errors on screen: $OUT" [ -z "$OUT" ] || return 1
+  check "no goodbye after Q" pty_has '◆ roam'
 }
 
 t_app_parks_live_and_comes_back() {
@@ -824,7 +831,55 @@ t_app_parks_live_and_comes_back() {
   if kill -0 $p 2>/dev/null; then kill $p; fail "roam didn't quit after parking"; return 1; fi
   check "nothing parked on the remote" git -C "$T/remote.git" rev-parse -q --verify refs/roam/A >/dev/null || return 1
   OUT=$(LC_ALL=C grep -a -c 'All parked' "$T/pty")
-  check "no 'All parked' in the app" [ "$OUT" -ge 1 ]
+  check "no 'All parked' in the app" [ "$OUT" -ge 1 ] || return 1
+  check "no picture of the parked work going up" pty_has '─ ─ ─▶'
+}
+
+t_art_only_in_a_terminal() {
+  in_a_terminal help
+  check "no logo in roam help" pty_has '██████╗' || return 1
+  ROAM_NO_ART=1 in_a_terminal help
+  check "ROAM_NO_ART=1 still shows the logo" not pty_has '██████╗' || return 1
+  echo x > "$T/A/dev/App/a.txt"
+  in_a_terminal park
+  check "no picture after park in a terminal" pty_has '─ ─ ─▶' || return 1
+  on A help
+  case $OUT in *"██"*) fail "the logo lands in a pipe"; return 1 ;; esac
+  echo y > "$T/A/dev/App/a.txt"; on A park
+  case $OUT in *"─ ─ ─▶"*) fail "a picture lands in a pipe"; return 1 ;; esac
+}
+
+t_old_macs_for_fans() {
+  in_a_terminal about
+  check "about doesn't show the Happy Mac" pty_has '│ │   ▌  ▐   │ │' || return 1
+  check "about doesn't show the version" pty_has "roam $(sed -n 's/^ROAM_VERSION=//p' "$ROOT/roam")" || return 1
+  check "about doesn't count the projects" pty_has 'Projects   1 ' || return 1
+  git -C "$T/A/dev/App" remote set-url origin git@github.com:me/app.git
+  printf '[url "%s"]\n\tinsteadOf = https://github.com/me/app.git\n' "$T/nowhere.git" > "$T/A/.gitconfig"
+  echo wip > "$T/A/dev/App/new.txt"
+  GIT_SSH_COMMAND=false in_a_terminal park
+  check "a failed park doesn't show the Sad Mac" pty_has '│ │   ╳  ╳   │ │' || return 1
+  check "a failed park shows the PowerBook going up" not pty_has '(◯)'
+}
+
+t_app_says_its_safe_when_nothing_is_open() {
+  local p
+  ( sleep 3; printf 'Q'; sleep 3 ) |
+    HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
+    script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
+  p=$!
+  for _ in $(seq 15); do sleep 1; kill -0 $p 2>/dev/null || break; done
+  kill $p 2>/dev/null
+  check "no Macintosh goodbye on a clean Mac" pty_has "It's now safe to turn off your Macintosh." || return 1
+  echo open > "$T/A/dev/App/a.txt"
+  ( sleep 3; printf 'Q'; sleep 3 ) |
+    HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" ROAM_NO_ANIM=1 \
+    script -q "$T/pty" "$ROOT/roam" >/dev/null 2>&1 &
+  p=$!
+  for _ in $(seq 15); do sleep 1; kill -0 $p 2>/dev/null || break; done
+  kill $p 2>/dev/null
+  check "says it's safe with open work" not pty_has "safe to turn off" || return 1
+  check "no reminder to park" pty_has 'park before you walk away'
 }
 
 # ---------------------------------------------------------------- what macOS and sync apps leave behind, new files

@@ -194,7 +194,8 @@ setup() {
   local target=${1:-} a name dir remote extra elsewhere d r seen root cs ch iv pools n found
   [ -t 0 ] || { echo "roam setup needs a terminal — it asks a few questions."; return 1; }
   clear
-  header "setup" "$(short_name "$(scutil --get ComputerName)")"
+  banner "setup" "$(short_name "$(scutil --get ComputerName)")"
+  art "$ART_WELCOME" 4 lead
   printf '\n  %sWork on the same projects from every Mac — always in sync.%s\n' "$C_BOLD" "$C_RESET"
   say_info "Seven quick steps. ⏎ takes the suggestion in (parentheses)."
 
@@ -322,7 +323,8 @@ EOF
   fi
   registry_write
 
-  echo; rule
+  echo; art "$ART_SYNC" 4
+  rule
   printf '  %s %s%s is in the pool.%s\n\n' "$I_OK" "$C_BOLD" "$(short_name "$(scutil --get ComputerName)")" "$C_RESET"
   printf '    %sroam%s          dashboard\n' "$C_ACCENT" "$C_RESET"
   printf '    %sroam park%s     before you switch to another Mac\n' "$C_ACCENT" "$C_RESET"

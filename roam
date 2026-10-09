@@ -16,12 +16,13 @@
 #   roam sync [project]        one project in the same state on every Mac (asks the other Macs too)
 #   roam undo [project]        back to how it was before the last resume (undo works twice, too)
 #   roam ignore [project] [path]  what isn't in the repo; with a path: it goes in ⇄ it stays out (.gitignore)
+#   roam about        About This Mac, roam style: version, this Mac, the pool at a glance
 #   roam leave        take this Mac out of the pool
 #   roam auto         background run (LaunchAgent): park, report, never touch your files
 #
 # roam needs nothing but git remotes and a folder all your Macs sync. https://github.com/WombatFirst220/roam
 set -u
-ROAM_VERSION=1.8.4
+ROAM_VERSION=1.9.0
 export LC_CTYPE=${LC_CTYPE:-en_US.UTF-8}   # count characters, not bytes (column widths)
 # The LaunchAgent starts with a bare PATH; add the usual tool folders so background runs see what
 # the terminal sees (Homebrew, ~/.local/bin with Claude Code, OrbStack, Deno, Bun, npm globals)
@@ -129,7 +130,7 @@ ago() {  # unix time → "5 min ago"
 }
 projects() { [ -f "$PROJECTS_CONF" ] && grep -v -E '^[[:space:]]*(#|$)' "$PROJECTS_CONF"; }
 
-for f in ui core doctor pool setup new sessions md tui secrets; do . "$HERE/lib/$f.sh"; done
+for f in ui art core doctor pool setup new sessions md tui secrets; do . "$HERE/lib/$f.sh"; done
 
 need_pool() {
   [ -n "$POOL" ] && [ -f "$PROJECTS_CONF" ] && return 0
@@ -147,9 +148,9 @@ lock() {
 }
 
 usage() {
-  header "v$ROAM_VERSION" ""
+  banner
   printf '\n  %sWork on the same projects from several Macs — always in sync.%s\n\n' "$C_BOLD" "$C_RESET"
-  sed -n '4,20p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
+  sed -n '4,21p' "$SRC" | sed 's/^#   /  /' | sed -E "s/^  (roam[a-z <>\[\]]*)/  ${C_ACCENT}\1${C_RESET}/"
   echo
 }
 
@@ -192,6 +193,7 @@ case $CMD in
   undo)    need_pool; undo_cmd "${2:-}" || ERRORS=1 ;;
   sync)    need_pool; sync_cmd "${2:-}" || ERRORS=1 ;;
   ignore)  need_pool; ignore_cmd "${2:-}" "${3:-}" || ERRORS=1 ;;
+  about)   need_pool; about_cmd ;;
   version|--version|-v) echo "roam $ROAM_VERSION" ;;
   help|-h|--help) usage ;;
   *) printf '  unknown command: %s\n' "$CMD"; usage; exit 2 ;;

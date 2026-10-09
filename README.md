@@ -85,7 +85,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.8.4                                                                               14:02
+ ◆ roam  v1.9.0                                                                               14:02
 ╭─ Projects ─────────────────────────── 4 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature… ●3 +1 ☁ ✻ 2m ● ││ Mac mini          feature/login ●3 +1 ☁              │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -171,6 +171,27 @@ minutes.
 - Truecolor in iTerm2, Ghostty, WezTerm, VS Code and Terminal on macOS 26 and later, 256 colors elsewhere
   (`ROAM_COLOR=256` forces it). `roam classic` — or `ROAM_PLAIN=1` — gives you the previous menu,
   `roam status` the dashboard as plain text.
+- A little art where there's a terminal to show it — for everyone who still misses the old Macs. The app
+  starts with the Happy Mac, then the logo. `park` sends a PowerBook's work up to the cloud, `resume`
+  brings it down to a compact Mac, `sync` puts it next to an iMac G3, `new` says hello like the 1984 Mac,
+  `setup` welcomes you, and when something fails, the Sad Mac shows up. The old Macs come in the six
+  stripes of the old rainbow logo. Quit the app with nothing open, and it ends the way every old Mac did.
+  Never in pipes, scripts or the background run; `ROAM_NO_ART=1` turns it off, `ROAM_NO_ANIM=1` skips the
+  animated start.
+
+  ```
+    ╭────────────╮
+    │ ╭────────╮ │
+    │ │ ░▒▓▒░  │ │
+    │ │        │ │               .-~~~-.
+    │ ╰────────╯ │    ─ ─ ─▶    (   ☁   )
+    ╰────────────╯             (_________)
+   ╱ ▫▫▫▫▫▫▫▫▫▫▫ ╲
+  ╱  ▫▫▫▫▫▫▫▫▫▫▫  ╲
+  ╲──────(◯)──────╱
+
+    ✓ All parked. On your next Mac: roam resume
+  ```
 
 ## Where did the AI leave off?
 
@@ -240,6 +261,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam sync [project]` | one project in the same state on every Mac: parks it here, asks the other Macs to sync it, takes what they had |
 | `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
 | `roam ignore [project] [path]` | what isn't in the repo; with a path: switch it between "goes in" and "stays out" (edits `.gitignore`) |
+| `roam about` | About This Mac, roam style: the Happy Mac, the version, this Mac and the pool at a glance |
 | `roam leave` | take this Mac out of the pool |
 
 ## How it works
@@ -356,7 +378,7 @@ sync app never has two versions to reconcile:
 **Environment** — `ROAM_POOL_TIMEOUT` (seconds a pool read may take before roam gives up, 30),
 `ROAM_SYNC_TIMEOUT` (Claude Code files and secrets, 300), `ROAM_SYNC_WAIT` (how long `roam sync` waits for
 the other Macs, 90), `ROAM_HEARTBEAT` (how often a Mac refreshes its "seen", 3600), `ROAM_COLOR`,
-`ROAM_MOUSE`, `ROAM_PLAIN` (see The app).
+`ROAM_MOUSE`, `ROAM_PLAIN`, `ROAM_NO_ART`, `ROAM_NO_ANIM` (see The app).
 
 ## Good to know
 

@@ -132,6 +132,7 @@ new_project() {  # $1 optional: name, or path of an existing folder
   printf '%-12s %-12s %s\n' "$name" "$name" "$(ssh_remote "$remote")" >> "$PROJECTS_CONF"
   registry_write
   say_ok "in the pool — your other Macs get it with ${C_ACCENT}roam resume${C_RESET}"
+  art "$ART_NEW" 6 lead
 
   if [ "$kind" = xcode ] && [ -z "$(find "$dir" -maxdepth 3 -name '*.xcodeproj' 2>/dev/null | head -1)" ]; then
     echo
