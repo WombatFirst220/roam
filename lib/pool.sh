@@ -316,17 +316,27 @@ request_send() {  # $1 Mac, $2 project → the request id
   pool_put "$tmp" "$POOL/requests/$1/$id.req" && echo "$id"
 }
 
+request_next() {  # $1 "|path|…" put off in this run → the first other request for this Mac (a function: bash 3.2 mis-parses case inside $( ))
+  local f
+  ls "$POOL/requests/$MAC"/*.req 2>/dev/null | while IFS= read -r f; do   # paths have spaces: one per line
+    case $1 in *"|$f|"*) ;; *) printf '%s\n' "$f"; break ;; esac
+  done
+}
+
 requests_handle() {  # answer the other Macs' sync requests for this Mac (in the background run)
   # until none is left: launchd doesn't start the run again for a request that arrives while it runs
-  local f id from project time line name dir remote extra out tmp
+  local f id from project time line name dir remote extra out tmp later=""
   while :; do
-    f=$(ls "$POOL/requests/$MAC"/*.req 2>/dev/null | head -1)
+    f=$(request_next "$later")
     [ -f "$f" ] || break
     id=$(basename "$f" .req) from=$(val from "$f") project=$(val project "$f") time=$(val time "$f")
-    rm -f "$f"; [ -f "$f" ] && { log "can't remove request $f"; break; }
-    if [ $(( $(date +%s) - ${time:-0} )) -ge $REQUEST_TTL ]; then log "request from $from for $project expired — ignored"; continue; fi
+    if [ $(( $(date +%s) - ${time:-0} )) -ge $REQUEST_TTL ]; then
+      rm -f "$f"; log "request from $from for $project expired — ignored"; continue; fi
     line=$(projects | awk -v n="$project" '$1 == n')
-    [ -n "$line" ] || continue
+    # a project just added on the asking Mac: the sync app may not have brought the new projects.conf yet —
+    # the request waits for a later run (until it expires), which clones the project then
+    if [ -z "$line" ]; then later="$later|$f|"; log "request from $from for $project: not in the pool here yet — later"; continue; fi
+    rm -f "$f"; [ -f "$f" ] && { log "can't remove request $f"; break; }
     read -r name dir remote extra <<EOF
 $line
 EOF
@@ -350,10 +360,10 @@ sync_cmd() {  # [project] — the project in the same state on every Mac: park h
   lock
   header "sync $P_NAME" "$(short_name "$(scutil --get ComputerName)")"; echo
   run_all park "$P_NAME"; errs=$ERRORS
-  # every other Mac that has the project: online and on roam 1.8+ → ask it; else say when it catches up
+  # every other Mac: online and on roam 1.8+ → ask it; else say when it catches up. Also a Mac that doesn't
+  # list the project yet (just added): answering the request clones it there
   while IFS= read -r f; do [ -n "$f" ] || continue
     m=$(basename "$f" .txt); [ "$m" = "$MAC" ] && continue
-    grep -q "^project=$P_NAME$TAB" "$f" || continue
     v=$(val version "$f")
     if ! version_ge "${v:-0}" 1.8.0; then say_info "$(mac_label "$m") runs roam ${v:-?} — from 1.8 on it can be synced from here"; continue; fi
     if [ $(( $(date +%s) - $(t=$(val seen "$f"); echo "${t:-0}") )) -ge "$ONLINE_SECS" ]; then

@@ -399,6 +399,35 @@ t_a_request_that_arrives_during_the_run_is_answered_too() {
   check "the request that came during the run waits for the next one" [ -f "$P/answers/A/2-A-second.ans" ] || return 1
   check "a request is left" not ls "$req"/*.req
 }
+t_sync_clones_a_new_project_on_the_other_mac() {
+  on B status                                         # B lists App only
+  git clone -q "$(second_remote fresh)" "$T/A/dev/Fresh" 2>/dev/null
+  on A add "$T/A/dev/Fresh"
+  answer_requests B &
+  ROAM_SYNC_WAIT=30 on A sync Fresh
+  wait
+  check "sync failed" [ $RC = 0 ] || return 1
+  check "B wasn't asked: Fresh not cloned there" [ -d "$T/B/dev/Fresh/.git" ] || return 1
+  case $OUT in *"cloned into"*) ;; *) fail "the answer doesn't say B cloned it"; return 1 ;; esac
+  case $OUT in *"is in sync"*) ;; *) fail "not in sync afterwards"; return 1 ;; esac
+}
+
+t_a_request_for_a_project_not_in_the_pool_here_yet_waits() {
+  # the sync app hasn't brought B the projects.conf with the new project: the request stays for a later run
+  local req="$P/requests/B" remote
+  remote=$(second_remote later)
+  mkdir -p "$req"
+  printf 'from=A\nproject=Later\naction=sync\ntime=%s\n' "$(date +%s)" > "$req/1-A-later.req"
+  on B auto
+  check "the request was dropped" [ -f "$req/1-A-later.req" ] || return 1
+  check "a request for an unknown project was answered" [ ! -f "$P/answers/A/1-A-later.ans" ] || return 1
+  printf 'Later  Later  %s\n' "$remote" >> "$P/projects.conf"   # now it has arrived
+  on B auto
+  check "not answered once the project arrived" [ -f "$P/answers/A/1-A-later.ans" ] || return 1
+  check "not cloned on B" [ -d "$T/B/dev/Later/.git" ] || return 1
+  check "the request is left" [ ! -f "$req/1-A-later.req" ]
+}
+
 t_sync_merges_work_from_both_macs() {
   on B status
   printf 'one\ntwo\nthree\n' > "$T/A/dev/App/b.txt"; ( cd "$T/A/dev/App" && git add b.txt && git -c user.name=t -c user.email=t@t commit -qm b && git push -q origin HEAD:main 2>/dev/null )

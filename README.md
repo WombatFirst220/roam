@@ -85,7 +85,7 @@ your real name and email stay off the internet.
 Just type `roam`:
 
 ```
- ◆ roam  v1.9.1                                                                               14:02
+ ◆ roam  v1.9.2                                                                               14:02
 ╭─ Projects ─────────────────────────── 4 ─╮╭─ MyApp ───────────────────────────────────── ⏎ open ─╮
 │ ❯ MyApp          feature… ●3 +1 ☁ ✻ 2m ● ││ Mac mini          feature/login ●3 +1 ☁              │
 │   Website        main ✓            ◇ 3h  ││ MacBook Pro       main ✓                             │
@@ -142,7 +142,9 @@ sides changed) and answers — and this Mac takes over the result. A Mac picks a
 launchd watches the pool's `requests/<Mac>` folder (otherwise within the auto-park interval); requests
 older than 30 minutes are dropped, and a Mac that synced on request shows a notification. It works from
 either side: when the Mac that takes over is ahead and the other one only lacks commits, roam puts that
-Mac's open work on top of the newer commits instead of refusing — or says it's there already.
+Mac's open work on top of the newer commits instead of refusing — or says it's there already. A project
+just added with `roam add` comes along too: a Mac that doesn't have it yet clones it when it answers —
+and if the sync app hasn't brought that Mac the new project list yet, the request waits for its next run.
 
 **Now** shows where work is going on at the moment, on every Mac: a running AI session (●), one from
 the last two hours or open changes on a Mac that is online (◐). It stays current by itself, every two
