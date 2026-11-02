@@ -17,6 +17,7 @@ new_pool() {  # $1 dir, $2 claude_sync, $3 claude_history, $4 interval
 # extras:  local=path1,path2   ignored files a project can't run without (e.g. Local.xcconfig)
 #          needs=cmd1,cmd2     extra command line tools
 #          secrets=1           ignored .env* and local= files travel, encrypted with age (key e in the app)
+#          was=OldName         set by roam rename: a Mac that still has the old folder moves it to the new name
 # The folder must be identical on every Mac: Claude Code keys history and memory by path.
 # Easiest way to add one: roam add <git remote>
 EOF

@@ -374,6 +374,8 @@ Without any configuration, by looking at your projects:
 | `X.example` | whether `X` exists locally |
 | an ignored file another Mac has | whether it's missing here (names only — contents never leave a Mac) |
 | `secrets=1` or `carry_secrets = 1` | age, to encrypt and decrypt them |
+| a GitHub remote (with `gh`) | whether GitHub renamed the repo — the fix is `roam rename` |
+| `was=` (after a rename) | the old folder still here: moved on the next run, or left over next to the new one |
 
 `✗ missing` blocks your work, `• hint` only matters for some parts (backend, deployment, devices),
 `ⓘ info` is just worth knowing and never counts as a problem — optional templates and files that only

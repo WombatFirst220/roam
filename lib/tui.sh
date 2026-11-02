@@ -1255,7 +1255,7 @@ tui_frame() {
   fb_flush
 }
 
-tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help|about: one frame on stdout, no terminal needed (tests, docs)
+tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|browse|help|about: one frame on stdout, no terminal needed (tests, docs)
   FILTER="${ROAM_TUI_FILTER:-}" VIDX=() DASH_OFF=0 DASH_LW=0 DASH_H=0 PROJ_OFF=0 PROJ_H=0
   TUI_DIR=$(mktemp -d -t roam-tui); SEL=0 BUSY="" TICKS=0 HELP_ON=0 TOAST_T=0 PROMPT="" PV_KEY="" FULL=1 PREV=() FB=""
   tui_palette; tui_size
