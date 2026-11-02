@@ -86,6 +86,23 @@ would, so update it first. **R** in the app does the same for the selected proje
 roam notices a rename on GitHub by itself (with `gh`): `roam doctor` names it with the fix, the app shows ↪ in
 the preview, and `roam add` or `roam resume` won't add or clone it as a second project.
 
+## All your projects at a glance
+
+Press **b** in the app (or run `roam projects`): one list of your GitHub repos, the folders in
+`~/Developer` and what's in roam, one row per repository.
+
+| | |
+|---|---|
+| ● | in roam — `⏎` takes it out: the folder stays on every Mac, the repo on GitHub too |
+| ○ | not in roam yet — a folder here, a repo on GitHub, or both. `⏎` adds it (a folder without a repo gets one first) |
+| ↪ | in roam, but renamed on GitHub — `⏎` renames it on every Mac (see above) |
+| ✗ | in roam, but GitHub doesn't know the repo any more — `⏎` takes it out |
+| · | archived on GitHub |
+
+`o` opens the repo on GitHub, `u` reloads. Without a signed-in `gh` the list shows the folders here and the
+pool. `roam remove MyApp` takes a project out on the command line; `roam add` brings it back, its Claude
+memory in the pool too.
+
 ## Start a new project
 
 ```bash
@@ -183,7 +200,7 @@ minutes.
   iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
   **y** syncs the selected project on every Mac (see above).
   **e** lets the selected project's secrets travel encrypted, or stops it (see below).
-  **R** renames the selected project on every Mac (see above).
+  **R** renames the selected project on every Mac, **b** opens the project browser (see above).
   **L** log, **u** refresh, **A** About This Mac (also `roam about`), **?** shows every key.
 - **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
 - The mouse works too: the wheel scrolls, a click selects, a click on the selected project opens it, a click
@@ -285,6 +302,8 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
 | `roam ignore [project] [path]` | what isn't in the repo; with a path: switch it between "goes in" and "stays out" (edits `.gitignore`) |
 | `roam rename [project] [new]` | a new name for app, repo and folder — on every Mac, Claude Code history included |
+| `roam projects` | every project: in roam, in your projects folder, on GitHub — renamed and deleted repos marked |
+| `roam remove [project]` | out of roam on every Mac — folders and the repo stay |
 | `roam about` | About This Mac, roam style: the Happy Mac, the version, this Mac and the pool at a glance |
 | `roam leave` | take this Mac out of the pool |
 

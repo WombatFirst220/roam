@@ -36,7 +36,7 @@ EOF
   rm -rf "$tmp"
 }
 
-repo_label() { basename "$(remote_norm "$1")"; }   # git@github.com:a/b.git → b
+repo_label() { local r=${1%/}; r=${r##*[:/]}; printf '%s\n' "${r%.git}"; }   # git@github.com:a/B.git → B (as GitHub spells it)
 
 was_dirs() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n 's/^was=//p' | tr ',' ' '; }   # $1 extras → old folders
 

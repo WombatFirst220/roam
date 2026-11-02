@@ -1193,6 +1193,64 @@ t_a_repo_renamed_on_github_is_noticed_never_cloned_twice() {
   check "pool line not switched to the new address" grep -q -E '^New +New +git@github.com:me/New.git was=Old$' "$P/projects.conf"
 }
 
+# ---------------------------------------------------------------- project browser
+gh_world() {  # GitHub as gh tells it: me/old renamed to me/New, me/Fresh not in roam, me/Attic archived
+  mkdir -p "$T/bin"
+  printf '%s\n' '#!/bin/bash' 'case "$*" in' \
+    '  "auth status") exit 0 ;;' \
+    '  "repo list"*) printf "git@github.com:me/New.git\tNew\t2026-11-02\tprivate\tthe renamed one\n"' \
+    '                printf "git@github.com:me/Fresh.git\tFresh\t2026-10-01\tpublic\tnot in roam yet\n"' \
+    '                printf "git@github.com:me/Attic.git\tAttic\t2020-01-01\tarchived\t\n" ;;' \
+    '  "api repos/me/old --jq .full_name") echo "me/New" ;;' \
+    '  *) exit 1 ;;' 'esac' > "$T/bin/gh"
+  chmod +x "$T/bin/gh"
+  printf 'Old  Old  git@github.com:me/old.git\n' >> "$P/projects.conf"
+  git clone -q "$T/remote.git" "$T/A/dev/New" 2>/dev/null
+  git -C "$T/A/dev/New" remote set-url origin git@github.com:me/New.git
+  mkdir -p "$T/A/dev/Loose"
+}
+
+t_projects_lists_roam_folders_here_and_github() {
+  gh_world
+  PATH="$T/bin:$PATH" on A projects
+  check "projects failed" [ $RC = 0 ] || return 1
+  case $OUT in *"↪ Old"*"renamed on GitHub to New, here ~/dev/New"*) ;; *) fail "the rename on GitHub isn't shown"; return 1 ;; esac
+  case $OUT in *"● App"*) ;; *) fail "App isn't shown as in roam"; return 1 ;; esac
+  case $OUT in *"○ Fresh"*"github.com/me/fresh"*) ;; *) fail "the repo only on GitHub isn't offered"; return 1 ;; esac
+  case $OUT in *"○ Loose"*"no git repo yet"*) ;; *) fail "the folder without a repo isn't offered"; return 1 ;; esac
+  case $OUT in *"· Attic"*archived*) ;; *) fail "the archived repo isn't shown as archived"; return 1 ;; esac
+  case $OUT in *"○ New"*) fail "the renamed repo shows up as a project of its own"; return 1 ;; esac
+}
+
+t_projects_without_github_shows_folders_and_the_pool() {
+  mkdir -p "$T/bin"; printf '#!/bin/bash\nexit 1\n' > "$T/bin/gh"; chmod +x "$T/bin/gh"
+  git clone -q "$(second_remote other)" "$T/A/dev/Other" 2>/dev/null
+  PATH="$T/bin:$PATH" on A projects
+  case $OUT in *"● App"*"○ Other"*) ;; *) fail "pool and folders not listed"; return 1 ;; esac
+  case $OUT in *"gh auth login"*) ;; *) fail "doesn't say GitHub is missing"; return 1 ;; esac
+}
+
+t_remove_takes_a_project_out_and_leaves_its_folder() {
+  mkdir -p "$P/sessions/A"; echo digest > "$P/sessions/A/App.txt"
+  on A remove App
+  check "remove failed" [ $RC = 0 ] || return 1
+  check "still in projects.conf" not grep -q '^App ' "$P/projects.conf" || return 1
+  check "the folder went too" [ -d "$T/A/dev/App/.git" ] || return 1
+  check "its session digest stayed in the pool" [ ! -e "$P/sessions/A/App.txt" ] || return 1
+  on B resume
+  check "B's folder went too" [ -d "$T/B/dev/App/.git" ]
+}
+
+t_app_browser_lists_projects() {
+  gh_world
+  OUT=$(PATH="$T/bin:$PATH" HOME="$T/A" ROAM_POOL="$P" ROAM_PROJECTS_DIR="$T/A/dev" ROAM_MAC=A ROAM_HOSTNAME=A ROAM_LOG="$T/A.log" \
+    ROAM_TUI_SNAPSHOT=browse ROAM_COLS=100 ROAM_ROWS=30 LC_ALL=en_US.UTF-8 "$ROOT/roam" 2>&1 | LC_ALL=C sed $'s/\033\\[[0-9;]*m//g')
+  printf '%s\n' "$OUT" | grep -q '↪ Old .*renamed on GitHub → New' || { fail "the rename isn't marked"; return 1; }
+  printf '%s\n' "$OUT" | grep -q '○ Fresh' || { fail "Fresh isn't offered"; return 1; }
+  printf '%s\n' "$OUT" | grep -q '1 in roam · 2 not yet · 1 to fix' || { fail "the counts are off"; return 1; }
+  printf '%s\n' "$OUT" | grep -q '⏎ rename it on every Mac' || { fail "the selected row doesn't say what ⏎ does"; return 1; }
+}
+
 # ---------------------------------------------------------------- run
 printf '\n  roam tests %s(%s)%s\n\n' "$D" "$(/bin/bash -c 'echo $BASH_VERSION')" "$N"
 for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do run "$t"; done

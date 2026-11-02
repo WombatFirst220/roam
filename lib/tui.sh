@@ -462,6 +462,7 @@ tui_poll() {  # on every tick: pick up what the background jobs finished
   # a view waiting for its data: draw again once it's there
   case $VIEW in
     run) DIRTY=1 ;;
+    browse) [ ${#B_ROWS[@]} -eq 0 ] && DIRTY=1 ;;
     dash) [ -n "$BUSY" ] && { [ ! -f "$TUI_DIR/s.$SEL" ] || [ ! -f "$TUI_DIR/d.$SEL" ]; } && [ $((TICKS % 3)) = 0 ] && DIRTY=1 ;;
     proj) [ "$PTAB" = 0 ] && [ ! -f "$TUI_DIR/s.$PJ" ] && DIRTY=1
           [ "$PTAB" = 1 ] && [ ! -f "$TUI_DIR/d.$PJ" ] && DIRTY=1 ;;
@@ -592,7 +593,7 @@ EOF
   topbar "${K_MUTED}v$ROAM_VERSION${K_R}" "${K_MUTED}$(date +%H:%M)${K_R}"
   local right=""; [ -n "$BUSY" ] && { spinner; right="$REPLY ${K_MUTED}${BUSY}…${K_R}"; }
   if [ -n "$PROMPT" ]; then prompt_bar "filter"
-  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs i:repo d:doctor A:about ?:keys_&_symbols q:quit" "$right"; fi
+  else statusbar "ROAM" "⏎:open /:filter r:resume p:park y:sync s:sessions v:docs b:projects i:repo d:doctor A:about ?:keys_&_symbols q:quit" "$right"; fi
 }
 
 dash_visible() {  # VIDX[] = projects whose name matches FILTER (letters in order, any case); keeps SEL on one of them
@@ -659,6 +660,7 @@ dash_key() {
     e) [ ${#VIDX[@]} -gt 0 ] && secrets_toggle ;;
     y) [ ${#VIDX[@]} -gt 0 ] && { tui_outside "Sync ${P_N[$SEL]}" "sync_cmd '${P_N[$SEL]}'"; tui_refresh; } ;;
     R) [ ${#VIDX[@]} -gt 0 ] && { tui_outside "" "rename_cmd '${P_N[$SEL]}'"; tui_refresh; } ;;
+    b) browse_open ;;
     q|Q) QUIT=1 ;;
   esac
 }
@@ -858,6 +860,125 @@ proj_mouse() {  # wheel moves through the list; click a tab, or a row (the selec
   esac
 }
 
+# ---------------------------------------------------------------- view: project browser (GitHub, folders here, the pool)
+browse_open() {
+  VIEW=browse BSEL=0 BOFF=0 BH=0 B_ROWS=()
+  rm -f "$TUI_DIR/browse" "$TUI_DIR/browse.tmp"
+  ( browse_rows > "$TUI_DIR/browse.tmp"; mv "$TUI_DIR/browse.tmp" "$TUI_DIR/browse" ) </dev/null >/dev/null 2>&1 &
+  TUI_JOBS="${TUI_JOBS:-} $!"
+}
+
+browse_load() {  # B_ROWS[] from the background job's file, once it's there → status 0 when loaded
+  [ ${#B_ROWS[@]} -gt 0 ] && return 0
+  [ -f "$TUI_DIR/browse" ] || return 1
+  read_lines "$TUI_DIR/browse"; B_ROWS=("${LN[@]}")
+  [ "$BSEL" -ge ${#B_ROWS[@]} ] && BSEL=$(( ${#B_ROWS[@]} > 0 ? ${#B_ROWS[@]} - 1 : 0 ))
+  return 0
+}
+
+browse_fields() {  # $1 row → kind name ssh path date vis pname newssh desc (globals)
+  IFS=$'\t' read -r kind name ssh path date vis pname newssh desc <<EOF
+$1
+EOF
+  browse_undash
+}
+
+browse_draw() {
+  local i n lh dh top=1 l mark col where kind name ssh path date vis pname newssh desc right
+  local nroam=0 nnew=0 nfix=0
+  if browse_load; then n=${#B_ROWS[@]}; else n=0; fi
+  for ((i = 0; i < n; i++)); do case ${B_ROWS[$i]%%$'\t'*} in roam) nroam=$((nroam + 1)) ;; new) nnew=$((nnew + 1)) ;; moved|gone) nfix=$((nfix + 1)) ;; esac; done
+  dh=9; lh=$(( ROWS - 2 - dh )); [ $lh -lt 5 ] && { lh=$(( ROWS - 2 )); dh=0; }
+  PC=()
+  local h=$((lh - 2)) off=0
+  [ $BSEL -ge $h ] && off=$((BSEL - h + 1))
+  BOFF=$off BH=$h
+  for ((i = 0; i < h && i + off < n; i++)); do
+    browse_fields "${B_ROWS[$((i + off))]}"
+    case $kind in
+      moved) mark="${K_WARN}↪${K_R}"; where="${K_WARN}renamed on GitHub → $(repo_label "$newssh")${K_R}${path:+ ${K_MUTED}· here $(short_path "$path")${K_R}}" ;;
+      gone) mark="${K_ERR}✗${K_R}"; where="${K_ERR}GitHub doesn't know it any more${K_R}" ;;
+      roam) mark="${K_OK}●${K_R}"; if [ -n "$path" ]; then where="${K_MUTED}$(short_path "$path")${K_R}"; else where="${K_MUTED}not on this Mac${K_R}"; fi ;;
+      new) mark="${K_ACC}○${K_R}"; where="${K_MUTED}${path:+$(short_path "$path") · }${ssh:+$(remote_norm "$ssh")}${K_R}"
+           [ -z "$ssh" ] && where="${K_MUTED}${path:+$(short_path "$path") · }no git repo yet${K_R}" ;;
+      *) mark="${K_DIM}·${K_R}"; where="${K_DIM}archived on GitHub${K_R}" ;;
+    esac
+    tfit "$name" 24
+    if [ "$kind" = archived ]; then tpad "${K_DIM}$FIT${K_R}" 25; else tpad "${K_B}$FIT${K_R}" 25; fi
+    right="${K_MUTED}${vis:+$vis  }${date}${K_R}"; [ "$kind" = archived ] && right="${K_DIM}${date}${K_R}"
+    tright "$mark $PAD$where" "$right" $((COLS - 6)); l=$PAD
+    if [ $((i + off)) -eq $BSEL ]; then sel_row "$l" $((COLS - 4)); else plain_row "$l"; fi
+    PC[$i]=$REPLY
+  done
+  if [ $n -eq 0 ]; then
+    if [ -f "$TUI_DIR/browse" ]; then PC[0]="${K_MUTED}no projects found — not in $(short_path "$PROJECTS_DIR"), not on GitHub${K_R}"
+    else spinner; PC[0]="$REPLY ${K_MUTED}asking GitHub, looking through $(short_path "$PROJECTS_DIR")…${K_R}"; fi
+  fi
+  panel $COLS $lh "Projects" 1 "$nroam in roam · $nnew not yet$([ $nfix -gt 0 ] && echo " · $nfix to fix")"
+  for ((i = 0; i < lh; i++)); do S[$((top + i))]=${PB[$i]}; done
+  if [ $dh -gt 0 ]; then
+    PC=()
+    if [ $n -gt 0 ]; then
+      browse_fields "${B_ROWS[$BSEL]}"
+      case $kind in
+        moved) PC[0]="${K_WARN}↪${K_R} in roam as ${K_B}$name${K_R} — on GitHub it's ${K_B}$(repo_label "$newssh")${K_R} now"
+               PC[1]="${K_ACC}⏎${K_R} rename it on every Mac: folder, git address and Claude history come along" ;;
+        gone) PC[0]="${K_ERR}✗${K_R} in roam, but GitHub doesn't know $(remote_norm "$ssh") any more (deleted, or no access)"
+              PC[1]="${K_ACC}⏎${K_R} take it out of roam — the folders on your Macs stay" ;;
+        roam) PC[0]="${K_OK}●${K_R} in roam — on every Mac at $(short_path "$PROJECTS_DIR/$name")"
+              PC[1]="${K_ACC}⏎${K_R} take it out of roam — its folder stays on every Mac, the repo on GitHub too" ;;
+        new) PC[0]="${K_ACC}○${K_R} not in roam yet"
+             if [ -n "$path" ] && [ -z "$ssh" ]; then PC[1]="${K_ACC}⏎${K_R} add it — roam creates its GitHub repo first (private unless you say public)"
+             elif [ -n "$path" ]; then PC[1]="${K_ACC}⏎${K_R} add it — your other Macs get it with their next resume"
+             else PC[1]="${K_ACC}⏎${K_R} add it — every Mac clones it with its next resume, this one too (r)"; fi ;;
+        *) PC[0]="${K_DIM}·${K_R} archived on GitHub — unarchive it there to work on it again" ;;
+      esac
+      PC[2]=""
+      [ -n "$ssh" ] && PC[3]="${K_MUTED}address  ${K_R}$(remote_norm "${newssh:-$ssh}")${vis:+ ${K_MUTED}· $vis${K_R}}"
+      if [ -n "$path" ]; then PC[4]="${K_MUTED}folder   ${K_R}$(short_path "$path")"; else PC[4]="${K_MUTED}folder   not on this Mac${K_R}"; fi
+      [ -n "$date" ] && PC[5]="${K_MUTED}last     ${K_R}$date"
+      [ -n "$desc" ] && { tfit "$desc" $((COLS - 16)); PC[6]="${K_MUTED}about    ${K_R}$FIT"; }
+    fi
+    right=""; case ${newssh:-${ssh:-}} in *github.com*) right="o opens it on GitHub" ;; esac
+    panel $COLS $dh "${name:-…}" 0 "$right"
+    for ((i = 0; i < dh; i++)); do S[$((top + lh + i))]=${PB[$i]}; done
+  fi
+  topbar "${K_LINE}›${K_R} ${K_B}Projects${K_R}" "${K_MUTED}GitHub · $(short_path "$PROJECTS_DIR") · pool${K_R}"
+  statusbar "PROJECTS" "⏎/space:add_·_remove_·_rename o:GitHub u:reload ?:help esc:back"
+}
+
+browse_key() {
+  local n=${#B_ROWS[@]} kind name ssh path date vis pname newssh desc
+  case $1 in
+    UP|k) [ $BSEL -gt 0 ] && BSEL=$((BSEL - 1)) ;;
+    DOWN|j) [ $BSEL -lt $((n - 1)) ] && BSEL=$((BSEL + 1)) ;;
+    HOME|g) BSEL=0 ;; END|G) BSEL=$((n > 0 ? n - 1 : 0)) ;;
+    PGUP) BSEL=$((BSEL > 10 ? BSEL - 10 : 0)) ;; PGDN) BSEL=$((BSEL + 10 < n ? BSEL + 10 : (n > 0 ? n - 1 : 0))) ;;
+    u) browse_open ;;
+    ENTER|' ')
+      [ $n -gt 0 ] || return
+      browse_fields "${B_ROWS[$BSEL]}"
+      case $kind in
+        moved) tui_outside "" "rename_cmd '$pname'" ;;
+        gone|roam) tui_outside "" "remove_cmd '$pname'" ;;
+        new) tui_outside "" "browse_add '$ssh' '$path' '$name'" ;;
+        *) toast "$name is archived on GitHub — unarchive it there first"; return ;;
+      esac
+      tui_refresh; browse_open ;;
+    o) [ $n -gt 0 ] || return
+       browse_fields "${B_ROWS[$BSEL]}"
+       case ${newssh:-$ssh} in *github.com*) open "https://$(remote_norm "${newssh:-$ssh}")" 2>/dev/null ;; *) toast "not on GitHub" ;; esac ;;
+    MOUSE) case $MOUSE_B in
+             64) browse_key UP ;; 65) browse_key DOWN ;;
+             0) [ "$MOUSE_UP" = 1 ] && return
+                local row=$((MOUSE_Y - 3 + BOFF))
+                [ "$MOUSE_Y" -ge 3 ] && [ "$MOUSE_Y" -lt $((3 + BH)) ] && [ $row -lt $n ] || return
+                if [ $row = $BSEL ]; then browse_key ENTER; else BSEL=$row; fi ;;
+           esac ;;
+    ESC|q|BS|LEFT|h) VIEW=dash ;;
+  esac
+}
+
 # ---------------------------------------------------------------- view: reader (Markdown files, session transcripts, the log)
 reader_load() {  # $1 rendered file, $2 title, $3 back-view
   local l n=0
@@ -1051,6 +1172,7 @@ Dashboard
   y        sync this project         e        encrypted secrets on/off
   i        what goes into the repo   ⏎ space  (Git tab) goes in ⇄ stays out
   A        About This Mac            R        rename this project
+  b        projects: GitHub, folders here — add, remove, rename
 Symbols
   ✓        clean, all pushed         ●n       files changed
   +n       new, never committed      ↑n       commits not pushed
@@ -1124,7 +1246,7 @@ tui_outside() {  # $1 title (empty: none), $2 shell code, $3 "nopause"
 tui_frame() {
   NOW=$(date +%s)
   S=()
-  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; reader) reader_draw ;; run) run_draw ;; esac
+  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; reader) reader_draw ;; run) run_draw ;; browse) browse_draw ;; esac
   toast_draw
   [ "$HELP_ON" = 1 ] && help_draw
   [ "${ABOUT_ON:-0}" = 1 ] && about_draw
@@ -1143,9 +1265,10 @@ tui_snapshot() {  # ROAM_TUI_SNAPSHOT=dash|proj|repo|help|about: one frame on st
   VIEW=dash NOW=$(date +%s)
   dash_visible   # ROAM_TUI_FILTER picks the project
   case $ROAM_TUI_SNAPSHOT in proj) proj_open 0 ;; repo) proj_open 2 ;; help) HELP_ON=1 ;; about) about_info; ABOUT_ON=1 ;;
+    browse) VIEW=browse BSEL=0 BOFF=0 BH=0 B_ROWS=(); browse_rows > "$TUI_DIR/browse" ;;
     esac
   S=()
-  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; esac
+  case $VIEW in dash) dash_draw ;; proj) proj_draw ;; browse) browse_draw ;; esac
   [ "$HELP_ON" = 1 ] && help_draw
   [ "${ABOUT_ON:-0}" = 1 ] && about_draw
   local i; for ((i = 0; i < ROWS; i++)); do printf '%s%s\n' "${S[$i]-}" "$K_R"; done
@@ -1229,7 +1352,7 @@ tui_main() {
     case $KEY in
       '?') HELP_ON=1; continue ;;
     esac
-    case $VIEW in dash) dash_key "$KEY" ;; proj) proj_key "$KEY" ;; reader) reader_key "$KEY" ;; run) run_key "$KEY" ;; esac
+    case $VIEW in dash) dash_key "$KEY" ;; proj) proj_key "$KEY" ;; reader) reader_key "$KEY" ;; run) run_key "$KEY" ;; browse) browse_key "$KEY" ;; esac
     [ "$VIEW" != "${LAST_VIEW:-}" ] && { FULL=1; LAST_VIEW=$VIEW; }
   done
   tui_leave
