@@ -204,12 +204,22 @@ report() {  # level name message → collected by run_all
   log "$1 $2: $3"
 }
 
-run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote — runs in a subshell, only reports
-  local mode=$1 name=$2 path="$PROJECTS_DIR/$3" remote=$4 elsewhere way
+run_project() {  # $1 park|resume|auto, $2 name, $3 dir, $4 remote, $5 extras — runs in a subshell, only reports
+  local mode=$1 name=$2 path="$PROJECTS_DIR/$3" remote=$4 extra=${5:-} elsewhere way old moved
+  # renamed on another Mac (was= in projects.conf): the old folder moves here — never a second clone
+  if [ ! -d "$path/.git" ] && [ ! -e "$path" ] && old=$(rename_source "$extra" "$3") && [ -n "$old" ]; then
+    rename_follow "$name" "$old" "$path" "$remote" "$mode" || return 0
+  fi
   if [ ! -d "$path/.git" ]; then
     [ "$mode" = resume ] || return 0
     elsewhere=$(cloned_elsewhere "$remote" "$3")
     if [ -n "$elsewhere" ]; then report err "$name" "already cloned as $(short_path "$elsewhere") — roam setup offers to rename it"; return; fi
+    # renamed on GitHub, and here under the new name already: that's this project — no second copy
+    moved=$(repo_moved "$remote")
+    [ -n "$moved" ] && elsewhere=$(cloned_elsewhere "$moved" "$3")
+    if [ -n "$elsewhere" ]; then
+      report err "$name" "renamed on GitHub to $(repo_label "$moved") and here as $(short_path "$elsewhere") — roam rename $name $(basename "$elsewhere")"; return
+    fi
     mkdir -p "$PROJECTS_DIR" || { report err "$name" "can't create $(short_path "$PROJECTS_DIR")"; return; }
     clone_project "$name" "$remote" "$path" || return
     report ok "$name" "cloned into $(short_path "$path")$CLONE_NOTE"
@@ -281,9 +291,9 @@ run_all() {  # $1 park|resume|auto, $2 only this project (optional) → sets ERR
     [ -z "$only" ] || [ "$name" = "$only" ] || continue
     out=$(mktemp)
     if [ "$mode" = auto ] || [ "$UI_FANCY" != 1 ]; then
-      ( REPORT_OUT=$out; run_project "$mode" "$name" "$dir" "$remote" )
+      ( REPORT_OUT=$out; run_project "$mode" "$name" "$dir" "$remote" "$extra" )
     else
-      ( REPORT_OUT=$out; run_project "$mode" "$name" "$dir" "$remote" ) &
+      ( REPORT_OUT=$out; run_project "$mode" "$name" "$dir" "$remote" "$extra" ) &
       spin_while $! "$(pad "${C_BOLD}$name${C_RESET}" 13) ${C_MUTED}${verb}…${C_RESET}"
     fi
     if [ "$mode" = auto ]; then
@@ -343,8 +353,8 @@ EOF
     out=$(mktemp)
     # park (this Mac's work to the remote), resume (the asking Mac's work here, merged if both changed),
     # park again (a merge goes back, so the asking Mac ends up with exactly this state)
-    ( REPORT_OUT=$out; run_project park "$name" "$dir" "$remote"; run_project resume "$name" "$dir" "$remote"
-      : > "$out.park"; REPORT_OUT=$out.park; run_project park "$name" "$dir" "$remote"; rm -f "$out.park" )
+    ( REPORT_OUT=$out; run_project park "$name" "$dir" "$remote" "$extra"; run_project resume "$name" "$dir" "$remote" "$extra"
+      : > "$out.park"; REPORT_OUT=$out.park; run_project park "$name" "$dir" "$remote" "$extra"; rm -f "$out.park" )
     registry_write
     notify "$project synced — asked from $(mac_label "$from")"
     mkdir -p "$POOL/answers/$from"

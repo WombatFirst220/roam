@@ -416,12 +416,19 @@ add_folder() {  # $1 a project folder on this Mac → in the pool (new repo on G
 }
 
 add_project() {  # $1 remote, $2 name (optional; also the folder name)
-  local remote=$1 name=${2:-}
+  local remote=$1 name=${2:-} old
   [ -n "$remote" ] || { echo "usage: roam add <git remote> [name]"; return 1; }
   [ -n "$name" ] || name=$(basename "$remote" .git)
   name=$(printf '%s' "$name" | tr -c 'A-Za-z0-9._\n-' '-')
   if projects | awk '{print $3}' | while read -r x; do remote_norm "$x"; echo; done | grep -q -x "$(remote_norm "$remote")"; then
     say_ok "$remote is already in the pool"; return 0
+  fi
+  # a repo renamed on GitHub is the project the pool has under the old name: rename it instead of a second one
+  old=$(pool_moved_to "$remote")
+  if [ -n "$old" ]; then
+    say_warn "$(remote_norm "$remote") is $old — renamed on GitHub"
+    if [ -t 0 ] && confirm "Rename $old to $name instead (on every Mac)?" y; then rename_cmd "$old" "$name" "$remote"; return; fi
+    say_info "roam rename $old $name gives it the new name on every Mac"; return 1
   fi
   if projects | awk '{print $1}' | grep -q -x "$name"; then say_err "the name $name is taken — try: roam add $remote <name>"; return 1; fi
   git ls-remote -q --heads "$remote" >/dev/null 2>&1 || { say_err "$remote is not reachable"; return 1; }

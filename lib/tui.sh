@@ -271,15 +271,21 @@ EOF
 tui_load() {  # projects and Macs from the pool's registry (fetch_everything rewrites this Mac's entry), work in flight from git
   local name dir remote extra f m i j k v l line sha time from br g applied now
   now=$(date +%s)
-  NP=0 P_N=() P_D=() P_SEC=() P_SYNC=() P_LAG=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
+  NP=0 P_N=() P_D=() P_SEC=() P_MOVED=() P_SYNC=() P_LAG=() P_CELL=() P_PV=() NM=0 M_ID=() M_LINE=() M_LABEL=() M_FRESH=() ST=()
   while read -r name dir remote extra; do
     [ -n "$name" ] || continue
-    P_N[NP]=$name P_D[NP]=$dir P_SEC[NP]=0
+    P_N[NP]=$name P_D[NP]=$dir P_SEC[NP]=0 P_MOVED[NP]=""
     { [ "$CARRY_SECRETS" = 1 ] || case " $extra " in *" secrets=1 "*) true ;; *) false ;; esac; } && P_SEC[NP]=1
     NP=$((NP + 1))
   done <<EOF
 $(projects)
 EOF
+  # renamed on GitHub (doctor asks GitHub at most hourly): R gives the project its new name
+  if [ -f "$DOCTOR_FILE" ]; then
+    while IFS="$US" read -r l k v _; do
+      case $v in "renamed on GitHub"*) for ((i = 0; i < NP; i++)); do [ "${P_N[$i]}" = "$k" ] && P_MOVED[i]=$v; done ;; esac
+    done < "$DOCTOR_FILE"
+  fi
   for f in "$MACS_DIR"/*.txt; do
     [ -f "$f" ] || continue
     m=${f##*/}; m=${m%.txt}
@@ -480,7 +486,7 @@ read_lines() {  # $1 file → LN[] (no subshell)
 
 # ---------------------------------------------------------------- view: dashboard
 dash_preview() {  # PV[] for the selected project (cached until the selection or the data changes)
-  local key="$SEL:$COLS:${P_SEC[$SEL]-}:${P_SYNC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d):$([ -f "$TUI_DIR/u.$SEL" ] && echo u)" w=$1 n=0 l i row
+  local key="$SEL:$COLS:${P_SEC[$SEL]-}:${P_MOVED[$SEL]:+m}:${P_SYNC[$SEL]-}:$([ -f "$TUI_DIR/s.$SEL" ] && echo s):$([ -f "$TUI_DIR/d.$SEL" ] && echo d):$([ -f "$TUI_DIR/u.$SEL" ] && echo u)" w=$1 n=0 l i row
   [ "$key" = "$PV_KEY" ] && return
   PV_KEY=$key PV=()
   case ${P_SYNC[$SEL]-} in
@@ -488,6 +494,9 @@ dash_preview() {  # PV[] for the selected project (cached until the selection or
     differs) tfit "${P_LAG[$SEL]:-the Macs differ}" $((w - 20)); PV[n]="${K_WARN}≠ not in sync${K_R} ${K_MUTED}·${K_R} $FIT"; n=$((n + 1))
              PV[n]="  ${K_ACC}y${K_R} ${K_MUTED}brings every Mac to the same state${K_R}"; n=$((n + 1)) ;;
   esac
+  if [ -n "${P_MOVED[$SEL]-}" ]; then
+    tfit "${P_MOVED[$SEL]%% — here*}" $((w - 20)); PV[n]="${K_WARN}↪${K_R} $FIT ${K_MUTED}· R: rename${K_R}"; n=$((n + 1))
+  fi
   local IFS=$'\n'
   for l in ${P_PV[$SEL]-}; do PV[n]=$l; n=$((n + 1)); done
   unset IFS
@@ -649,6 +658,7 @@ dash_key() {
     c) [ ${#VIDX[@]} -gt 0 ] && tui_outside "" "continue_cmd '${P_N[$SEL]}' 1" ;;
     e) [ ${#VIDX[@]} -gt 0 ] && secrets_toggle ;;
     y) [ ${#VIDX[@]} -gt 0 ] && { tui_outside "Sync ${P_N[$SEL]}" "sync_cmd '${P_N[$SEL]}'"; tui_refresh; } ;;
+    R) [ ${#VIDX[@]} -gt 0 ] && { tui_outside "" "rename_cmd '${P_N[$SEL]}'"; tui_refresh; } ;;
     q|Q) QUIT=1 ;;
   esac
 }
@@ -956,7 +966,7 @@ run_start() {  # $1 park|resume
     : > "$TUI_DIR/run.locked"
     for ((i = 0; i < NP; i++)); do
       echo "$i" > "$TUI_DIR/run.cur"
-      ( REPORT_OUT="$TUI_DIR/run.$i.tmp"; : > "$REPORT_OUT"; run_project "$RUN_MODE" "${P_N[$i]}" "${P_D[$i]}" "$(projects | awk -v n="${P_N[$i]}" '$1 == n {print $3; exit}')" )
+      ( REPORT_OUT="$TUI_DIR/run.$i.tmp"; : > "$REPORT_OUT"; run_project "$RUN_MODE" "${P_N[$i]}" "${P_D[$i]}" "$(projects | awk -v n="${P_N[$i]}" '$1 == n {print $3; exit}')" "$(projects | awk -v n="${P_N[$i]}" '$1 == n { for (k = 4; k <= NF; k++) printf "%s ", $k; exit }')" )
       mv "$TUI_DIR/run.$i.tmp" "$TUI_DIR/run.$i"
     done
     registry_write
@@ -1040,13 +1050,14 @@ Dashboard
   n        new project               a / L    add a project / log
   y        sync this project         e        encrypted secrets on/off
   i        what goes into the repo   ⏎ space  (Git tab) goes in ⇄ stays out
-  A        About This Mac
+  A        About This Mac            R        rename this project
 Symbols
   ✓        clean, all pushed         ●n       files changed
   +n       new, never committed      ↑n       commits not pushed
   ☁        parked on the remote      —        not cloned on that Mac
   ≡ ≠      same on every Mac / not   ⚿        secrets travel encrypted
   ▸ ● ○    this Mac / online / away  ◐ ●      open changes / AI running
+  ↪        renamed on GitHub
   ✻ ◇ ✦    Claude, Codex, Gemini     ◈ ▣      Copilot, opencode
 Reader
   space b  page down / up            / n N    search, next, previous

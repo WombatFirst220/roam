@@ -157,15 +157,28 @@ check_docker() {  # $1 project — Docker CLI, or an installed but never started
 }
 
 check_project() {  # $1 name, $2 path, $3 remote, $4 extra columns
-  local name=$1 path=$2 remote=$3 extra=$4 pbx target sdk teams t d f mgr elsewhere c required n m
+  local name=$1 path=$2 remote=$3 extra=$4 pbx target sdk teams t d f mgr elsewhere c required n m moved old
+  moved=$(repo_moved "$remote")
   if [ ! -d "$path/.git" ]; then
     elsewhere=$(cloned_elsewhere "$remote" "$(basename "$path")")
-    if [ -n "$elsewhere" ]; then res missing "$name" "cloned as $(short_path "$elsewhere") instead of $(short_path "$path")" "" "roam setup offers to rename it"
+    [ -z "$elsewhere" ] && [ -n "$moved" ] && elsewhere=$(cloned_elsewhere "$moved" "$(basename "$path")")
+    old=$(rename_source "$extra" "$(basename "$path")")
+    if [ -n "$old" ]; then res missing "$name" "still $(short_path "$old") here — renamed to $name on another Mac" "roam resume" "roam moves the folder on its next run, once nothing has it open"
+    elif [ -n "$elsewhere" ] && [ -n "$moved" ]; then
+      res missing "$name" "renamed on GitHub to $(repo_label "$moved") — here it's $(short_path "$elsewhere")" "roam rename $name $(basename "$elsewhere")"
+    elif [ -n "$elsewhere" ]; then res missing "$name" "cloned as $(short_path "$elsewhere") instead of $(short_path "$path")" "" "roam setup offers to rename it"
     else res missing "$name" "not on this Mac yet" "roam resume"; fi
     return
   fi
   if git -C "$path" ls-remote -q --heads origin >/dev/null 2>&1; then res ok "$name" "Remote reachable"
   else res missing "$name" "remote not reachable: $remote" "" "add your SSH key at your git host (roam setup walks you through it)"; fi
+  [ -n "$moved" ] && res hint "$name" "renamed on GitHub: now $(repo_label "$moved")" "roam rename $name" "roam rename gives the project the new name on every Mac"
+  # the folder from before a rename, still next to the new one
+  for old in $(was_dirs "$extra"); do
+    [ "$old" != "$(basename "$path")" ] && [ -d "$PROJECTS_DIR/$old" ] || continue
+    projects | awk -v d="$old" '$2 == d { f = 1 } END { exit !f }' && continue
+    res info "$name" "$(short_path "$PROJECTS_DIR/$old") is left over from before the rename — delete it once nothing in it is needed"
+  done
   # Claude Code files (transcripts, memory) the sync app left as NUL bytes: resume restores them from the pool's copy
   n=0 m=0
   while IFS= read -r f; do

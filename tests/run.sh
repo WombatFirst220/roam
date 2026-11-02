@@ -1095,6 +1095,104 @@ t_app_names_the_mac_behind() {
   case $OUT in *"is 1 commit behind"*) ;; *) fail "the preview doesn't name the Mac behind"; return 1 ;; esac
 }
 
+# ---------------------------------------------------------------- rename
+key_of() { printf '%s' "$1" | sed 's#[^A-Za-z0-9]#-#g'; }   # $1 path → its folder under ~/.claude/projects
+
+t_rename_takes_folder_claude_history_and_pool_data_along() {
+  local old new
+  old="$T/A/.claude/projects/$(key_of "$T/A/dev/App")"; new="$T/A/.claude/projects/$(key_of "$T/A/dev/Web")"
+  mkdir -p "$old/memory" "$P/claude/App" "$P/sessions/A" "$P/secrets/App"
+  echo note > "$old/memory/m.md"; echo '{"a":1}' > "$old/s1.jsonl"
+  echo x > "$P/claude/App/x.md"; echo digest > "$P/sessions/A/App.txt"; echo sealed > "$P/secrets/App/A.age"
+  on A rename App Web
+  check "rename failed" [ $RC = 0 ] || return 1
+  check "folder not moved" [ -d "$T/A/dev/Web/.git" ] && [ ! -e "$T/A/dev/App" ] || return 1
+  check "Claude history didn't move along" [ -f "$new/memory/m.md" ] && [ -f "$new/s1.jsonl" ] && [ ! -e "$old" ] || return 1
+  check "pool line not rewritten" grep -q -E "^Web +Web +$T/remote.git was=App\$" "$P/projects.conf" || return 1
+  check "pool Claude store not moved" [ -f "$P/claude/Web/x.md" ] && [ ! -e "$P/claude/App" ] || return 1
+  check "session digest not moved" [ -f "$P/sessions/A/Web.txt" ] && [ ! -e "$P/sessions/A/App.txt" ] || return 1
+  check "secrets not moved" [ -f "$P/secrets/Web/A.age" ] && [ ! -e "$P/secrets/App" ]
+}
+
+t_rename_merges_claude_history_of_a_folder_renamed_by_hand() {
+  local old new
+  old="$T/A/.claude/projects/$(key_of "$T/A/dev/App")"; new="$T/A/.claude/projects/$(key_of "$T/A/dev/Web")"
+  mv "$T/A/dev/App" "$T/A/dev/Web"
+  mkdir -p "$old/memory" "$new/memory"
+  printf -- '- [A](a.md) — old\n' > "$old/memory/MEMORY.md"; echo '{"s":1}' > "$old/s1.jsonl"
+  printf -- '- [B](b.md) — new\n' > "$new/memory/MEMORY.md"; echo '{"s":2}' > "$new/s2.jsonl"
+  on A rename App Web
+  check "rename failed" [ $RC = 0 ] || return 1
+  check "MEMORY.md lost a line" grep -q '(a.md)' "$new/memory/MEMORY.md" && grep -q '(b.md)' "$new/memory/MEMORY.md" || return 1
+  check "a transcript went missing" [ -f "$new/s1.jsonl" ] && [ -f "$new/s2.jsonl" ] || return 1
+  check "the old Claude folder is still there" [ ! -e "$old" ]
+}
+
+t_another_mac_follows_a_rename() {
+  local bold bnew
+  bold="$T/B/.claude/projects/$(key_of "$T/B/dev/App")"; bnew="$T/B/.claude/projects/$(key_of "$T/B/dev/Web")"
+  mkdir -p "$bold/memory"; echo b > "$bold/memory/b.md"
+  git clone -q --bare "$T/remote.git" "$T/renamed.git"   # GitHub's rename: the same history at a new address
+  on A rename App Web "$T/renamed.git"
+  check "rename failed" [ $RC = 0 ] || return 1
+  check "A's origin not switched" [ "$(git -C "$T/A/dev/Web" remote get-url origin)" = "$T/renamed.git" ] || return 1
+  on B park
+  check "B didn't move its folder" [ -d "$T/B/dev/Web/.git" ] && [ ! -e "$T/B/dev/App" ] || return 1
+  check "B's origin not switched" [ "$(git -C "$T/B/dev/Web" remote get-url origin)" = "$T/renamed.git" ] || return 1
+  check "B's Claude memory didn't move along" [ -f "$bnew/memory/b.md" ] && [ ! -e "$bold" ]
+}
+
+t_a_rename_waits_while_the_old_folder_is_open() {
+  local pid
+  ( cd "$T/B/dev/App" && exec sleep 30 ) & pid=$!
+  sleep 0.3
+  on A rename App Web
+  on B resume
+  check "B moved a folder that was open" [ -d "$T/B/dev/App/.git" ] || { kill $pid; return 1; }
+  check "B cloned the project a second time" [ ! -e "$T/B/dev/Web" ] || { kill $pid; return 1; }
+  case $OUT in *sleep*) ;; *) fail "doesn't say what has the folder open"; kill $pid; return 1 ;; esac
+  kill $pid; wait $pid 2>/dev/null
+  on B resume
+  check "B didn't move it once closed" [ -d "$T/B/dev/Web/.git" ] && [ ! -e "$T/B/dev/App" ]
+}
+
+t_a_rename_to_another_repository_leaves_the_folder_alone() {
+  git init -q --bare "$T/other.git"
+  git init -q "$T/o" && ( cd "$T/o" && echo o > o.txt && git add o.txt &&
+    git -c user.name=t -c user.email=t@t commit -q -m other && git push -q "$T/other.git" HEAD:main 2>/dev/null )
+  on A rename App Web "$T/other.git"
+  on B resume
+  check "B moved its folder onto another repository" [ -d "$T/B/dev/App/.git" ] && [ ! -e "$T/B/dev/Web" ] || return 1
+  check "B's origin was left switched" [ "$(git -C "$T/B/dev/App" remote get-url origin)" = "$T/remote.git" ] || return 1
+  case $OUT in *"another repository"*) ;; *) fail "doesn't say why"; return 1 ;; esac
+}
+
+gh_stub() {  # GitHub as gh tells it: me/old was renamed to me/New
+  mkdir -p "$T/bin"
+  printf '%s\n' '#!/bin/bash' 'case "$*" in' \
+    '  "api repos/me/old --jq .full_name"|"api repos/me/new --jq .full_name") echo "me/New" ;;' \
+    '  *) exit 1 ;;' 'esac' > "$T/bin/gh"
+  chmod +x "$T/bin/gh"
+  printf 'Old  Old  git@github.com:me/old.git\n' >> "$P/projects.conf"
+  git clone -q "$T/remote.git" "$T/A/dev/New" 2>/dev/null
+  git -C "$T/A/dev/New" remote set-url origin git@github.com:me/New.git
+}
+
+t_a_repo_renamed_on_github_is_noticed_never_cloned_twice() {
+  gh_stub
+  PATH="$T/bin:$PATH" on A resume
+  check "cloned the old name next to the renamed folder" [ ! -e "$T/A/dev/Old" ] || return 1
+  case $OUT in *"roam rename Old New"*) ;; *) fail "resume doesn't suggest the rename"; return 1 ;; esac
+  PATH="$T/bin:$PATH" on A doctor
+  case $OUT in *"roam rename Old New"*) ;; *) fail "doctor doesn't suggest the rename"; return 1 ;; esac
+  PATH="$T/bin:$PATH" on A add "$T/A/dev/New"
+  check "added the renamed repo as a second project" not grep -q '^New ' "$P/projects.conf" || return 1
+  case $OUT in *"roam rename Old New"*) ;; *) fail "add doesn't suggest the rename"; return 1 ;; esac
+  PATH="$T/bin:$PATH" on A rename Old New
+  check "rename failed" [ $RC = 0 ] || return 1
+  check "pool line not switched to the new address" grep -q -E '^New +New +git@github.com:me/New.git was=Old$' "$P/projects.conf"
+}
+
 # ---------------------------------------------------------------- run
 printf '\n  roam tests %s(%s)%s\n\n' "$D" "$(/bin/bash -c 'echo $BASH_VERSION')" "$N"
 for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do run "$t"; done

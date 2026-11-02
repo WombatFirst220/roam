@@ -66,6 +66,26 @@ unless you say public), exactly like `roam new`. A folder outside `~/Developer` 
 history included, because every Mac keeps a project at the same path. `roam add ~/Desktop/MyApp`,
 `roam add .` or `roam add git@github.com:you/app.git` skip the question.
 
+## Rename a project
+
+```bash
+roam rename MyApp NewName
+```
+
+The app got a new name, the repo on GitHub too, maybe you renamed the folder already? `roam rename` gives
+the project its new name in the pool and takes everything along: this Mac's folder (unless it's renamed
+already), Claude Code history and memory (merged, if both names have some), the git address (asked from
+GitHub, which keeps redirecting a renamed repo), and what the pool keeps per project. Without a new name it
+suggests one — a folder here that holds the repo under another name, or the repo's new name on GitHub.
+
+Your other Macs follow on their next run: their old folder moves to the new name, Claude history included —
+once no terminal or Claude Code session has its working directory in it (roam says which one) and the new
+address holds the same history. They never clone the project a second time. A Mac on roam before 1.10
+would, so update it first. **R** in the app does the same for the selected project.
+
+roam notices a rename on GitHub by itself (with `gh`): `roam doctor` names it with the fix, the app shows ↪ in
+the preview, and `roam add` or `roam resume` won't add or clone it as a second project.
+
 ## Start a new project
 
 ```bash
@@ -163,6 +183,7 @@ minutes.
   iTerm2). **d** doctor, **f** fix, **n** new, **a** add run in the terminal as usual and bring you back.
   **y** syncs the selected project on every Mac (see above).
   **e** lets the selected project's secrets travel encrypted, or stops it (see below).
+  **R** renames the selected project on every Mac (see above).
   **L** log, **u** refresh, **A** About This Mac (also `roam about`), **?** shows every key.
 - **/** filters the projects as you type (`wi` finds WIMM), `esc` clears it.
 - The mouse works too: the wheel scrolls, a click selects, a click on the selected project opens it, a click
@@ -263,6 +284,7 @@ The app shows them too: each project's newest session in the preview, all of the
 | `roam sync [project]` | one project in the same state on every Mac: parks it here, asks the other Macs to sync it, takes what they had |
 | `roam undo [project]` | back to how the project was before the last resume — undo works twice, too |
 | `roam ignore [project] [path]` | what isn't in the repo; with a path: switch it between "goes in" and "stays out" (edits `.gitignore`) |
+| `roam rename [project] [new]` | a new name for app, repo and folder — on every Mac, Claude Code history included |
 | `roam about` | About This Mac, roam style: the Happy Mac, the version, this Mac and the pool at a glance |
 | `roam leave` | take this Mac out of the pool |
 
@@ -359,6 +381,7 @@ and a failed push says why instead of blaming the network.
 - `local=a,b` — ignored files a project can't run without (missing → ✗)
 - `needs=x,y` — extra command line tools (missing → ✗, `roam fix` tries `brew install`)
 - `secrets=1` — its ignored `.env*` and `local=` files travel encrypted (key **e** in the app)
+- `was=OldName` — set by `roam rename`: a Mac that still has the old folder moves it to the new name
 
 **`settings`** — `claude_sync`, `claude_history` (0 = memory only, no transcripts),
 `session_digest` (0/1/2, see above), `carry_secrets` (1 = every project's secrets travel, see above), `interval_min`, `max_file_mb`.
